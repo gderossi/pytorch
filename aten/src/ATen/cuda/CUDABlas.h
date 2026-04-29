@@ -16,6 +16,7 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/BlasBackend.h>
 #include <ATen/OpMathType.h>
+#include <memory>
 
 namespace at::cuda::blas {
 
@@ -389,5 +390,78 @@ template<>
 TORCH_CUDA_CU_API void gelsBatched<c10::complex<double>>(CUDABLAS_GELS_BATCHED_ARGTYPES(c10::complex<double>));
 template<>
 TORCH_CUDA_CU_API void gelsBatched<c10::complex<float>>(CUDABLAS_GELS_BATCHED_ARGTYPES(c10::complex<float>));
+
+// Internal helpers exposed for tunable GEMM implementations.
+TORCH_CUDA_CPP_API cublasOperation_t _cublasOpFromChar(char op);
+TORCH_CUDA_CPP_API void _cublasAdjustLdLevel3(
+    char transa, char transb,
+    int64_t m, int64_t n, int64_t k,
+    int64_t* lda, int64_t* ldb, int64_t* ldc);
+
+// RAII wrappers for cuBLASLt descriptors (moved to header for use in GemmCublasLt.h).
+template <typename T, cublasStatus_t (*destructor)(T*)>
+struct CuBlasLtDeleter {
+  void operator()(T* x) {
+    if (x != nullptr) {
+      TORCH_CUDABLAS_CHECK(destructor(x));
+    }
+  }
+};
+
+template <typename T, cublasStatus_t (*destructor)(T*)>
+class CuBlasLtDescriptor {
+ public:
+  T* descriptor() const { return descriptor_.get(); }
+  T* descriptor() { return descriptor_.get(); }
+ protected:
+  std::unique_ptr<T, CuBlasLtDeleter<T, destructor>> descriptor_;
+};
+
+class CuBlasLtMatmulDescriptor : public CuBlasLtDescriptor<
+                                     cublasLtMatmulDescOpaque_t,
+                                     &cublasLtMatmulDescDestroy> {
+ public:
+  CuBlasLtMatmulDescriptor(cublasComputeType_t compute_type, cudaDataType_t scale_type) {
+    cublasLtMatmulDesc_t raw_descriptor = nullptr;
+    TORCH_CUDABLAS_CHECK(cublasLtMatmulDescCreate(&raw_descriptor, compute_type, scale_type));
+    descriptor_.reset(raw_descriptor);
+  }
+  template <typename T>
+  void setAttribute(cublasLtMatmulDescAttributes_t attr, const T value) {
+    // NOLINTNEXTLINE(bugprone-sizeof-expression)
+    TORCH_CUDABLAS_CHECK(::cublasLtMatmulDescSetAttribute(descriptor(), attr, &value, sizeof(value)));
+  }
+};
+
+class CuBlasLtMatrixLayout : public CuBlasLtDescriptor<
+                                 cublasLtMatrixLayoutOpaque_t,
+                                 &cublasLtMatrixLayoutDestroy> {
+ public:
+  CuBlasLtMatrixLayout(cudaDataType_t type, uint64_t rows, uint64_t cols, int64_t ld, bool t = false) {
+    cublasLtMatrixLayout_t raw_descriptor = nullptr;
+    TORCH_CUDABLAS_CHECK(
+        cublasLtMatrixLayoutCreate(&raw_descriptor, type, t ? cols : rows, t ? rows : cols, ld));
+    descriptor_.reset(raw_descriptor);
+  }
+  template <typename T>
+  void setAttribute(cublasLtMatrixLayoutAttribute_t attr, const T value) {
+    TORCH_CUDABLAS_CHECK(::cublasLtMatrixLayoutSetAttribute(descriptor(), attr, &value, sizeof(T)));
+  }
+};
+
+class CuBlasLtMatmulPreference : public CuBlasLtDescriptor<
+                                     cublasLtMatmulPreferenceOpaque_t,
+                                     &cublasLtMatmulPreferenceDestroy> {
+ public:
+  CuBlasLtMatmulPreference() {
+    cublasLtMatmulPreference_t raw_descriptor = nullptr;
+    TORCH_CUDABLAS_CHECK(cublasLtMatmulPreferenceCreate(&raw_descriptor));
+    descriptor_.reset(raw_descriptor);
+  }
+  template <typename T>
+  void setAttribute(cublasLtMatmulPreferenceAttributes_t attr, const T value) {
+    TORCH_CUDABLAS_CHECK(::cublasLtMatmulPreferenceSetAttribute(descriptor(), attr, &value, sizeof(T)));
+  }
+};
 
 } // namespace at::cuda::blas

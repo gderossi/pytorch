@@ -13,6 +13,8 @@
 #ifdef USE_ROCM
 #include <ATen/cuda/tunable/GemmHipblaslt.h>
 #include <ATen/cuda/tunable/GemmRocblas.h>
+#elif defined(USE_CUDA)
+#include <ATen/cuda/tunable/GemmCublasLt.h>
 #endif
 #include <ATen/cuda/tunable/TunableOp.h>
 #include <c10/cuda/CUDACachingAllocator.h>
@@ -207,7 +209,7 @@ inline const char* TypeName(c10::complex<float> v) {
 template <typename T, BlasOp ALayout, BlasOp BLayout>
 class GemmTunableOp : public TunableOp<GemmParams<T>> {
  public:
-  GemmTunableOp() {
+  explicit GemmTunableOp(const GemmParams<T>* params) {
     this->RegisterOp(std::string("Default"), std::make_unique<DefaultGemmOp<T>>());
 
 #ifdef USE_ROCM
@@ -227,6 +229,13 @@ class GemmTunableOp : public TunableOp<GemmParams<T>> {
         for (auto&& [name, op] : GetHipBlasLtGemmTypeStringAndOps<T, ALayout, BLayout>()) {
           this->RegisterOp(std::move(name), std::move(op));
         }
+      }
+    }
+#elif defined(USE_CUDA)
+    static const char* env_cublaslt = std::getenv("PYTORCH_TUNABLEOP_CUBLASLT_ENABLED");
+    if (env_cublaslt == nullptr || strcmp(env_cublaslt, "1") == 0) {
+      for (auto&& [name, op] : GetCublasLtGemmTypeStringAndOps<T, ALayout, BLayout>(params)) {
+        this->RegisterOp(std::move(name), std::move(op));
       }
     }
 #endif
