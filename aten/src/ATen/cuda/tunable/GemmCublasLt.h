@@ -105,8 +105,7 @@ class CublasltGemmOp : public Callable<GemmParams<T>> {
         c_desc.descriptor(),
         &algo_,
         &algo_check);
-    if (check_status != CUBLAS_STATUS_SUCCESS ||
-        algo_check.state != CUBLASLT_HEURISTICS_LOAD_STATUS_SUCCESS) {
+    if (check_status != CUBLAS_STATUS_SUCCESS) {
       return FAIL;
     }
     if (algo_check.workspaceSize > workspace_size) {
