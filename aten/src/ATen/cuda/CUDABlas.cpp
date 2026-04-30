@@ -371,14 +371,19 @@ class CuBlasLtGroupedMatrixLayout
   CuBlasLtGroupedMatrixLayout(
       cudaDataType_t type,
       int group_count,
-      const int32_t* rows_array,
-      const int32_t* cols_array,
-      const int32_t* ld_array,
-      bool t = false) {
+      const void* rows_array,
+      const void* cols_array,
+      const void* ld_array,
+      bool t,
+      bool use_int64) {
     cublasLtMatrixLayout_t raw = nullptr;
     TORCH_CUDABLAS_CHECK(cublasLtGroupedMatrixLayoutCreate(
         &raw, type, group_count, t ? cols_array : rows_array, t ? rows_array : cols_array, ld_array));
     descriptor_.reset(raw);
+    if (use_int64) {
+      setAttribute(CUBLASLT_GROUPED_MATRIX_LAYOUT_ROWS_COLS_ARRAY_INTEGER_WIDTH, CUBLASLT_INTEGER_WIDTH_64);
+      setAttribute(CUBLASLT_GROUPED_MATRIX_LAYOUT_LD_ARRAY_INTEGER_WIDTH, CUBLASLT_INTEGER_WIDTH_64);
+    }
   }
   template <typename V>
   void setAttribute(cublasLtMatrixLayoutAttribute_t attr, const V value) {
@@ -2387,27 +2392,28 @@ void int8_gemm(
 void grouped_gemm(
     char transa,
     char transb,
-    const int32_t *mArrayDev,
+    const void *mArrayDev,
     int64_t avgM,
-    const int32_t *nArrayDev,
+    const void *nArrayDev,
     int64_t avgN,
-    const int32_t *kArrayDev,
+    const void *kArrayDev,
     int64_t avgK,
     const int64_t *alphaArrayDev,
     const float *alphaScalar,
     ScalarType input_dtype,
     const int64_t *APtrArrayDev,
-    const int32_t *ldaArrayDev,
+    const void *ldaArrayDev,
     const int64_t *BPtrArrayDev,
-    const int32_t *ldbArrayDev,
+    const void *ldbArrayDev,
     const int64_t *betaArrayDev,
     const float *betaScalar,
     ScalarType result_dtype,
     const int64_t *CPtrArrayDev,
-    const int32_t *ldcArrayDev,
+    const void *ldcArrayDev,
     int64_t *DPtrArrayDev,
-    const int32_t *lddArrayDev,
-    int batchCount) {
+    const void *lddArrayDev,
+    int batchCount,
+    bool use_int64_dims) {
 #if !defined(USE_ROCM) && defined(CUDA_VERSION) && CUDA_VERSION >= 13020
   cudaDeviceProp* prop = at::cuda::getCurrentDeviceProperties();
   const bool sm90 = prop->major == 9;
@@ -2430,10 +2436,10 @@ void grouped_gemm(
   computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_ALPHA_BATCH_STRIDE, alphaBatchStride);
   computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_BETA_BATCH_STRIDE, betaBatchStride);
 
-  CuBlasLtGroupedMatrixLayout Adesc(ScalarTypeToCudaDataType(input_dtype), batchCount, mArrayDev, kArrayDev, ldaArrayDev, transa == 't');
-  CuBlasLtGroupedMatrixLayout Bdesc(ScalarTypeToCudaDataType(input_dtype), batchCount, kArrayDev, nArrayDev, ldbArrayDev, transb == 't');
-  CuBlasLtGroupedMatrixLayout Cdesc(ScalarTypeToCudaDataType(result_dtype), batchCount, mArrayDev, nArrayDev, ldcArrayDev);
-  CuBlasLtGroupedMatrixLayout Ddesc(ScalarTypeToCudaDataType(result_dtype), batchCount, mArrayDev, nArrayDev, lddArrayDev);
+  CuBlasLtGroupedMatrixLayout Adesc(ScalarTypeToCudaDataType(input_dtype), batchCount, mArrayDev, kArrayDev, ldaArrayDev, transa != 'n', use_int64_dims);
+  CuBlasLtGroupedMatrixLayout Bdesc(ScalarTypeToCudaDataType(input_dtype), batchCount, kArrayDev, nArrayDev, ldbArrayDev, transb != 'n', use_int64_dims);
+  CuBlasLtGroupedMatrixLayout Cdesc(ScalarTypeToCudaDataType(result_dtype), batchCount, mArrayDev, nArrayDev, ldcArrayDev, false, use_int64_dims);
+  CuBlasLtGroupedMatrixLayout Ddesc(ScalarTypeToCudaDataType(result_dtype), batchCount, mArrayDev, nArrayDev, lddArrayDev, false, use_int64_dims);
 
   CuBlasLtMatmulPreference preference;
   auto ltworkspace = CublasLtWorkspace();
