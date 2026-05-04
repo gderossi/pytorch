@@ -457,6 +457,11 @@ std::optional<c10::ScalarType> out_dtype) {
   const auto out_dtype_ = _resolve_grouped_mm_out_dtype(mat_a, mat_b, out_dtype);
   Tensor out = create_grouped_gemm_output_tensor(mat_a, mat_b, offs, out_dtype_);
 
+  // cuBLAS grouped GEMM packs per-group m/n/k and lda/ldb/ldd into device
+  // arrays whose width is either 32-bit or 64-bit. Switch to 64-bit if any
+  // dimension or any stride that ends up as a leading dim could overflow
+  // int32_t. Per-group deltas (jagged dim) are bounded by the corresponding
+  // total size, so checking sizes is sufficient.
   const bool needs_int64 =
       mat_a.size(-2) > std::numeric_limits<int32_t>::max() ||
       mat_a.size(-1) > std::numeric_limits<int32_t>::max() ||

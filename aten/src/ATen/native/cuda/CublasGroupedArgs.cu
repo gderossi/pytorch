@@ -63,36 +63,60 @@ __global__ void populate_cublas_grouped_args_kernel(
   betaPtr_out[i] = reinterpret_cast<int64_t>(beta_ptr);
 }
 
+// Carves up args.buf into typed sub-arrays, stores the pointers on `args`,
+// and launches the kernel that fills them in. Layout of buf:
+//   [m, n, k, lda, ldb, ldd]   -- 6 x batchCount of IndexType
+//   [A*, B*, D*, alpha*, beta*]-- 5 x batchCount of int64_t (device ptrs)
+//   [alpha_scalar, beta_scalar]-- 2 x float
 template <typename IndexType>
 void launch_populate_cublas_grouped_args(
+    cublasGroupedArgs& args,
     int batchCount,
     const int32_t* offs,
     int64_t base_A, int64_t base_B, int64_t base_D,
-    IndexType cublas_m, IndexType cublas_n, IndexType cublas_k,
+    int64_t cublas_m, int64_t cublas_n, int64_t cublas_k,
     bool m_is_delta, bool n_is_delta, bool k_is_delta,
-    IndexType lda_val, IndexType ldb_val, IndexType ldd_val,
+    int64_t lda_val, int64_t ldb_val, int64_t ldd_val,
     int64_t a_offs_stride, int64_t a_idx_stride,
     int64_t b_offs_stride, int64_t b_idx_stride,
     int64_t d_offs_stride, int64_t d_idx_stride,
-    IndexType* m_out, IndexType* n_out, IndexType* k_out,
-    IndexType* lda_out, IndexType* ldb_out, IndexType* ldd_out,
-    int64_t* APtr_out, int64_t* BPtr_out, int64_t* DPtr_out,
-    int64_t* alphaPtr_out, int64_t* betaPtr_out,
-    float* alpha_ptr, float* beta_ptr,
     cudaStream_t stream) {
-  populate_cublas_grouped_args_kernel<<<1, batchCount, 0, stream>>>(
+  IndexType* m_arr   = reinterpret_cast<IndexType*>(args.buf.data_ptr());
+  IndexType* n_arr   = m_arr + batchCount;
+  IndexType* k_arr   = n_arr + batchCount;
+  IndexType* lda_arr = k_arr + batchCount;
+  IndexType* ldb_arr = lda_arr + batchCount;
+  IndexType* ldd_arr = ldb_arr + batchCount;
+
+  args.APtrArray     = reinterpret_cast<int64_t*>(ldd_arr + batchCount);
+  args.BPtrArray     = args.APtrArray + batchCount;
+  args.DPtrArray     = args.BPtrArray + batchCount;
+  args.alphaPtrArray = args.DPtrArray + batchCount;
+  args.betaPtrArray  = args.alphaPtrArray + batchCount;
+
+  args.alphaScalar = reinterpret_cast<float*>(args.betaPtrArray + batchCount);
+  args.betaScalar  = args.alphaScalar + 1;
+
+  args.mArray   = m_arr;
+  args.nArray   = n_arr;
+  args.kArray   = k_arr;
+  args.ldaArray = lda_arr;
+  args.ldbArray = ldb_arr;
+  args.lddArray = ldd_arr;
+
+  populate_cublas_grouped_args_kernel<IndexType><<<1, batchCount, 0, stream>>>(
       offs, base_A, base_B, base_D,
-      cublas_m, cublas_n, cublas_k,
+      static_cast<IndexType>(cublas_m), static_cast<IndexType>(cublas_n), static_cast<IndexType>(cublas_k),
       m_is_delta, n_is_delta, k_is_delta,
-      lda_val, ldb_val, ldd_val,
+      static_cast<IndexType>(lda_val), static_cast<IndexType>(ldb_val), static_cast<IndexType>(ldd_val),
       a_offs_stride, a_idx_stride,
       b_offs_stride, b_idx_stride,
       d_offs_stride, d_idx_stride,
-      m_out, n_out, k_out,
-      lda_out, ldb_out, ldd_out,
-      APtr_out, BPtr_out, DPtr_out,
-      alphaPtr_out, betaPtr_out,
-      alpha_ptr, beta_ptr);
+      m_arr, n_arr, k_arr,
+      lda_arr, ldb_arr, ldd_arr,
+      args.APtrArray, args.BPtrArray, args.DPtrArray,
+      args.alphaPtrArray, args.betaPtrArray,
+      args.alphaScalar, args.betaScalar);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
@@ -217,91 +241,19 @@ cublasGroupedArgs::cublasGroupedArgs(
 
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
-  if (use_int64) {
-    // Pack as int64_t arrays
-    int64_t* m_arr = reinterpret_cast<int64_t*>(buf.data_ptr());
-    int64_t* n_arr = m_arr + batchCount;
-    int64_t* k_arr = n_arr + batchCount;
-    int64_t* lda_arr = k_arr + batchCount;
-    int64_t* ldb_arr = lda_arr + batchCount;
-    int64_t* ldd_arr = ldb_arr + batchCount;
-
-    APtrArray     = reinterpret_cast<int64_t*>(ldd_arr + batchCount);
-    BPtrArray     = APtrArray + batchCount;
-    DPtrArray     = BPtrArray + batchCount;
-    alphaPtrArray = DPtrArray + batchCount;
-    betaPtrArray  = alphaPtrArray + batchCount;
-
-    float* alpha_scalar = reinterpret_cast<float*>(betaPtrArray + batchCount);
-    float* beta_scalar  = alpha_scalar + 1;
-    alphaScalar = alpha_scalar;
-    betaScalar = beta_scalar;
-
-    mArray = m_arr;
-    nArray = n_arr;
-    kArray = k_arr;
-    ldaArray = lda_arr;
-    ldbArray = ldb_arr;
-    lddArray = ldd_arr;
-
-    launch_populate_cublas_grouped_args<int64_t>(
-        batchCount, offs_ptr,
-        base_A, base_B, base_D,
-        static_cast<int64_t>(cublas_m), static_cast<int64_t>(cublas_n), static_cast<int64_t>(cublas_k),
-        m_is_delta, n_is_delta, k_is_delta,
-        static_cast<int64_t>(lda_val), static_cast<int64_t>(ldb_val), static_cast<int64_t>(ldd_val),
-        a_offs_stride, a_idx_stride,
-        b_offs_stride, b_idx_stride,
-        d_offs_stride, d_idx_stride,
-        m_arr, n_arr, k_arr,
-        lda_arr, ldb_arr, ldd_arr,
-        APtrArray, BPtrArray, DPtrArray,
-        alphaPtrArray, betaPtrArray,
-        alpha_scalar, beta_scalar,
-        stream);
-  } else {
-    // Pack as int32_t arrays (common case)
-    int32_t* m_arr = reinterpret_cast<int32_t*>(buf.data_ptr());
-    int32_t* n_arr = m_arr + batchCount;
-    int32_t* k_arr = n_arr + batchCount;
-    int32_t* lda_arr = k_arr + batchCount;
-    int32_t* ldb_arr = lda_arr + batchCount;
-    int32_t* ldd_arr = ldb_arr + batchCount;
-
-    APtrArray     = reinterpret_cast<int64_t*>(ldd_arr + batchCount);
-    BPtrArray     = APtrArray + batchCount;
-    DPtrArray     = BPtrArray + batchCount;
-    alphaPtrArray = DPtrArray + batchCount;
-    betaPtrArray  = alphaPtrArray + batchCount;
-
-    float* alpha_scalar = reinterpret_cast<float*>(betaPtrArray + batchCount);
-    float* beta_scalar  = alpha_scalar + 1;
-    alphaScalar = alpha_scalar;
-    betaScalar = beta_scalar;
-
-    mArray = m_arr;
-    nArray = n_arr;
-    kArray = k_arr;
-    ldaArray = lda_arr;
-    ldbArray = ldb_arr;
-    lddArray = ldd_arr;
-
-    launch_populate_cublas_grouped_args<int32_t>(
-        batchCount, offs_ptr,
-        base_A, base_B, base_D,
-        static_cast<int32_t>(cublas_m), static_cast<int32_t>(cublas_n), static_cast<int32_t>(cublas_k),
-        m_is_delta, n_is_delta, k_is_delta,
-        static_cast<int32_t>(lda_val), static_cast<int32_t>(ldb_val), static_cast<int32_t>(ldd_val),
-        a_offs_stride, a_idx_stride,
-        b_offs_stride, b_idx_stride,
-        d_offs_stride, d_idx_stride,
-        m_arr, n_arr, k_arr,
-        lda_arr, ldb_arr, ldd_arr,
-        APtrArray, BPtrArray, DPtrArray,
-        alphaPtrArray, betaPtrArray,
-        alpha_scalar, beta_scalar,
-        stream);
-  }
+  auto launch = use_int64
+      ? &launch_populate_cublas_grouped_args<int64_t>
+      : &launch_populate_cublas_grouped_args<int32_t>;
+  launch(
+      *this, batchCount, offs_ptr,
+      base_A, base_B, base_D,
+      cublas_m, cublas_n, cublas_k,
+      m_is_delta, n_is_delta, k_is_delta,
+      lda_val, ldb_val, ldd_val,
+      a_offs_stride, a_idx_stride,
+      b_offs_stride, b_idx_stride,
+      d_offs_stride, d_idx_stride,
+      stream);
 }
 #endif // !defined(USE_ROCM) && defined(CUDA_VERSION) && CUDA_VERSION >= 13020
 

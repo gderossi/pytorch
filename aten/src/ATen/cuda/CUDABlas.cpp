@@ -2429,15 +2429,18 @@ void grouped_gemm(
   const int64_t alphaBatchStride = sm90 ? 0 : 1;
   const int64_t betaBatchStride = sm90 ? 0 : 1;
 
+  cublasOperation_t opa = _cublasOpFromChar(transa);
+  cublasOperation_t opb = _cublasOpFromChar(transb);
+
   CuBlasLtMatmulDescriptor computeDesc(computeType, scaleType);
-  computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_TRANSA, _cublasOpFromChar(transa));
-  computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_TRANSB, _cublasOpFromChar(transb));
+  computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_TRANSA, opa);
+  computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_TRANSB, opb);
   computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_POINTER_MODE, pointer_mode);
   computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_ALPHA_BATCH_STRIDE, alphaBatchStride);
   computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_BETA_BATCH_STRIDE, betaBatchStride);
 
-  CuBlasLtGroupedMatrixLayout Adesc(ScalarTypeToCudaDataType(input_dtype), batchCount, mArrayDev, kArrayDev, ldaArrayDev, transa != 'n', use_int64_dims);
-  CuBlasLtGroupedMatrixLayout Bdesc(ScalarTypeToCudaDataType(input_dtype), batchCount, kArrayDev, nArrayDev, ldbArrayDev, transb != 'n', use_int64_dims);
+  CuBlasLtGroupedMatrixLayout Adesc(ScalarTypeToCudaDataType(input_dtype), batchCount, mArrayDev, kArrayDev, ldaArrayDev, opa != CUBLAS_OP_N, use_int64_dims);
+  CuBlasLtGroupedMatrixLayout Bdesc(ScalarTypeToCudaDataType(input_dtype), batchCount, kArrayDev, nArrayDev, ldbArrayDev, opb != CUBLAS_OP_N, use_int64_dims);
   CuBlasLtGroupedMatrixLayout Cdesc(ScalarTypeToCudaDataType(result_dtype), batchCount, mArrayDev, nArrayDev, ldcArrayDev, false, use_int64_dims);
   CuBlasLtGroupedMatrixLayout Ddesc(ScalarTypeToCudaDataType(result_dtype), batchCount, mArrayDev, nArrayDev, lddArrayDev, false, use_int64_dims);
 

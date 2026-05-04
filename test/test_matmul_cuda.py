@@ -917,7 +917,7 @@ class TestMatmulCuda(InductorTestCase):
     @unittest.skipIf(not SM90OrLater or SM120OrLater, "cublaslt grouped gemm requires SM 9.0-11.0")
     @unittest.skipIf(SM90OrLater and not SM100OrLater and _get_torch_cuda_version() < (13, 3),
                      "cublaslt grouped gemm on SM 9.0 requires CUDA Toolkit >= 13.3")
-    @parametrize("op", ["2d/3d", "3d/2d", "3d/3d"])
+    @parametrize("op", ["2d/2d", "2d/3d", "3d/2d", "3d/3d"])
     def test_grouped_gemm_cublaslt_int64_indexing(self, op):
         # Verify that the int64 indexing path works correctly when a
         # leading dimension (stride) exceeds INT32_MAX. Uses as_strided
@@ -962,6 +962,17 @@ class TestMatmulCuda(InductorTestCase):
             offs = torch.tensor([1], device=device, dtype=torch.int32)
 
             C_ref = torch.mm(A[0], B.contiguous())
+        elif op == "2d/2d":
+            # 2D x 2D (jagged K) with ngroups=1. mat_a (2D) has a large
+            # leading dimension but M=1 so only K elements of storage are
+            # actually accessed.
+            M, N = 1, 8
+            storage_a = torch.randn(K, device=device, dtype=dtype)
+            A = torch.as_strided(storage_a, (M, K), (big_ld, 1))
+            B = torch.randn(K, N, device=device, dtype=dtype)
+            offs = torch.tensor([K], device=device, dtype=torch.int32)
+
+            C_ref = torch.mm(A.contiguous(), B).unsqueeze(0)
         else:
             raise AssertionError(f"Invalid op: {op}")
 
