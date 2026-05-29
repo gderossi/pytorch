@@ -6,6 +6,7 @@
 #include <ATen/cuda/CUDABlas.h>
 #include <ATen/cuda/Exceptions.h>
 #include <ATen/cuda/CUDADataType.h>
+#include <ATen/cuda/tunable/CublasLtHeuristic.h>
 #include <ATen/cuda/tunable/Tunable.h>
 #include <ATen/cuda/tunable/TunableGemm.h>
 #include <c10/macros/Export.h>
@@ -556,6 +557,30 @@ static inline bool bgemm_internal_cublaslt(CUDABLAS_BGEMM_ARGTYPES_AND_C_DTYPE(D
      CuBlasLtMatrixLayout FakeBdesc(abType, k, 2, ldb, opb == CUBLAS_OP_T);
      CuBlasLtMatrixLayout FakeCdesc(cType, m, 2, ldc);
 
+#ifndef USE_ROCM
+     TORCH_CUDABLAS_CHECK(tunable::getTunedCublasLtMatmulHeuristic(
+        ltHandle,
+        computeDesc.descriptor(),
+        Adesc.descriptor(),
+        Bdesc.descriptor(),
+        Cdesc.descriptor(),
+        Cdesc.descriptor(),
+        FakeBdesc.descriptor(),
+        FakeCdesc.descriptor(),
+        FakeCdesc.descriptor(),
+        preference.descriptor(),
+        alpha_ptr,
+        a,
+        b,
+        beta_ptr,
+        c,
+        c,
+        ltworkspace.ptr,
+        ltworkspace.size,
+        at::cuda::getCurrentCUDAStream(),
+        &heuristicResult,
+        &returnedResult));
+#else
      TORCH_CUDABLAS_CHECK(cublasLtMatmulAlgoGetHeuristic(
         ltHandle,
         computeDesc.descriptor(),
@@ -567,7 +592,32 @@ static inline bool bgemm_internal_cublaslt(CUDABLAS_BGEMM_ARGTYPES_AND_C_DTYPE(D
         1,
         &heuristicResult,
         &returnedResult));
+#endif
   } else {
+#ifndef USE_ROCM
+    TORCH_CUDABLAS_CHECK(tunable::getTunedCublasLtMatmulHeuristic(
+        ltHandle,
+        computeDesc.descriptor(),
+        Adesc.descriptor(),
+        Bdesc.descriptor(),
+        Cdesc.descriptor(),
+        Cdesc.descriptor(),
+        Bdesc.descriptor(),
+        Cdesc.descriptor(),
+        Cdesc.descriptor(),
+        preference.descriptor(),
+        alpha_ptr,
+        a,
+        b,
+        beta_ptr,
+        c,
+        c,
+        ltworkspace.ptr,
+        ltworkspace.size,
+        at::cuda::getCurrentCUDAStream(),
+        &heuristicResult,
+        &returnedResult));
+#else
     TORCH_CUDABLAS_CHECK(cublasLtMatmulAlgoGetHeuristic(
         ltHandle,
         computeDesc.descriptor(),
@@ -579,6 +629,7 @@ static inline bool bgemm_internal_cublaslt(CUDABLAS_BGEMM_ARGTYPES_AND_C_DTYPE(D
         1,
         &heuristicResult,
         &returnedResult));
+#endif
   }
   if (returnedResult == 0) {
     cublasStatus = CUBLAS_STATUS_NOT_SUPPORTED;
@@ -1027,8 +1078,7 @@ inline void bgemm_tunable(CUDABLAS_BGEMM_ARGTYPES_AND_C_DTYPE(Dtype, C_Dtype)) {
 
 template <>
 void bgemm<double>(CUDABLAS_BGEMM_ARGTYPES(double)) {
-  auto tuning_ctx = at::cuda::tunable::getTuningContext();
-  if (tuning_ctx->IsTunableOpEnabled()) {
+  if (tunable::shouldUseTunableOp()) {
     bgemm_tunable<double>(CUDABLAS_BGEMM_ARGS(double));
   }
   else {
@@ -1038,8 +1088,7 @@ void bgemm<double>(CUDABLAS_BGEMM_ARGTYPES(double)) {
 
 template <>
 void bgemm<float>(CUDABLAS_BGEMM_ARGTYPES(float)) {
-  auto tuning_ctx = at::cuda::tunable::getTuningContext();
-  if (tuning_ctx->IsTunableOpEnabled()) {
+  if (tunable::shouldUseTunableOp()) {
     bgemm_tunable<float>(CUDABLAS_BGEMM_ARGS(float));
   }
   else {
@@ -1049,8 +1098,7 @@ void bgemm<float>(CUDABLAS_BGEMM_ARGTYPES(float)) {
 
 template <>
 void bgemm<c10::complex<double>>(CUDABLAS_BGEMM_ARGTYPES(c10::complex<double>)) {
-  auto tuning_ctx = at::cuda::tunable::getTuningContext();
-  if (tuning_ctx->IsTunableOpEnabled()) {
+  if (tunable::shouldUseTunableOp()) {
     bgemm_tunable<c10::complex<double>>(CUDABLAS_BGEMM_ARGS(c10::complex<double>));
   }
   else {
@@ -1060,8 +1108,7 @@ void bgemm<c10::complex<double>>(CUDABLAS_BGEMM_ARGTYPES(c10::complex<double>)) 
 
 template <>
 void bgemm<c10::complex<float>>(CUDABLAS_BGEMM_ARGTYPES(c10::complex<float>)) {
-  auto tuning_ctx = at::cuda::tunable::getTuningContext();
-  if (tuning_ctx->IsTunableOpEnabled()) {
+  if (tunable::shouldUseTunableOp()) {
     bgemm_tunable<c10::complex<float>>(CUDABLAS_BGEMM_ARGS(c10::complex<float>));
   }
   else {
@@ -1071,8 +1118,7 @@ void bgemm<c10::complex<float>>(CUDABLAS_BGEMM_ARGTYPES(c10::complex<float>)) {
 
 template <>
 void bgemm<at::Half>(CUDABLAS_BGEMM_ARGTYPES(at::Half)) {
-  auto tuning_ctx = at::cuda::tunable::getTuningContext();
-  if (tuning_ctx->IsTunableOpEnabled()) {
+  if (tunable::shouldUseTunableOp()) {
     bgemm_tunable<at::Half>(CUDABLAS_BGEMM_ARGS(at::Half));
   }
   else {
@@ -1082,8 +1128,7 @@ void bgemm<at::Half>(CUDABLAS_BGEMM_ARGTYPES(at::Half)) {
 
 template <>
 void bgemm<at::BFloat16>(CUDABLAS_BGEMM_ARGTYPES(at::BFloat16)) {
-  auto tuning_ctx = at::cuda::tunable::getTuningContext();
-  if (tuning_ctx->IsTunableOpEnabled()) {
+  if (tunable::shouldUseTunableOp()) {
     bgemm_tunable<at::BFloat16>(CUDABLAS_BGEMM_ARGS(at::BFloat16));
   }
   else {
@@ -1572,8 +1617,7 @@ inline void gemm_tunable(CUDABLAS_GEMM_ARGTYPES_AND_C_DTYPE(DType, C_Dtype)) {
 
 template <>
 void gemm<double>(CUDABLAS_GEMM_ARGTYPES(double)) {
-  auto tuning_ctx = at::cuda::tunable::getTuningContext();
-  if (tuning_ctx->IsTunableOpEnabled()) {
+  if (tunable::shouldUseTunableOp()) {
     gemm_tunable<double>(CUDABLAS_GEMM_ARGS(double));
   }
   else {
@@ -1583,8 +1627,7 @@ void gemm<double>(CUDABLAS_GEMM_ARGTYPES(double)) {
 
 template <>
 void gemm<float>(CUDABLAS_GEMM_ARGTYPES(float)) {
-  auto tuning_ctx = at::cuda::tunable::getTuningContext();
-  if (tuning_ctx->IsTunableOpEnabled()) {
+  if (tunable::shouldUseTunableOp()) {
     gemm_tunable<float>(CUDABLAS_GEMM_ARGS(float));
   }
   else {
@@ -1594,8 +1637,7 @@ void gemm<float>(CUDABLAS_GEMM_ARGTYPES(float)) {
 
 template <>
 void gemm<c10::complex<double>>(CUDABLAS_GEMM_ARGTYPES(c10::complex<double>)) {
-  auto tuning_ctx = at::cuda::tunable::getTuningContext();
-  if (tuning_ctx->IsTunableOpEnabled()) {
+  if (tunable::shouldUseTunableOp()) {
     gemm_tunable<c10::complex<double>>(CUDABLAS_GEMM_ARGS(c10::complex<double>));
   }
   else {
@@ -1605,8 +1647,7 @@ void gemm<c10::complex<double>>(CUDABLAS_GEMM_ARGTYPES(c10::complex<double>)) {
 
 template <>
 void gemm<c10::complex<float>>(CUDABLAS_GEMM_ARGTYPES(c10::complex<float>)) {
-  auto tuning_ctx = at::cuda::tunable::getTuningContext();
-  if (tuning_ctx->IsTunableOpEnabled()) {
+  if (tunable::shouldUseTunableOp()) {
     gemm_tunable<c10::complex<float>>(CUDABLAS_GEMM_ARGS(c10::complex<float>));
   }
   else {
@@ -1616,8 +1657,7 @@ void gemm<c10::complex<float>>(CUDABLAS_GEMM_ARGTYPES(c10::complex<float>)) {
 
 template <>
 void gemm<at::Half>(CUDABLAS_GEMM_ARGTYPES(at::Half)) {
-  auto tuning_ctx = at::cuda::tunable::getTuningContext();
-  if (tuning_ctx->IsTunableOpEnabled()) {
+  if (tunable::shouldUseTunableOp()) {
     gemm_tunable<at::Half>(CUDABLAS_GEMM_ARGS(at::Half));
   }
   else {
@@ -1627,8 +1667,7 @@ void gemm<at::Half>(CUDABLAS_GEMM_ARGTYPES(at::Half)) {
 
 template <>
 void gemm<at::BFloat16>(CUDABLAS_GEMM_ARGTYPES(at::BFloat16)) {
-  auto tuning_ctx = at::cuda::tunable::getTuningContext();
-  if (tuning_ctx->IsTunableOpEnabled()) {
+  if (tunable::shouldUseTunableOp()) {
     gemm_tunable<at::BFloat16>(CUDABLAS_GEMM_ARGS(at::BFloat16));
   }
   else {
@@ -1815,6 +1854,30 @@ bool gemm_and_bias(
   cublasLtMatmulHeuristicResult_t heuristicResult = {};
   int returnedResult = 0;
   cublasLtHandle_t ltHandle = at::cuda::getCurrentCUDABlasLtHandle();
+#ifndef USE_ROCM
+  TORCH_CUDABLAS_CHECK(tunable::getTunedCublasLtMatmulHeuristic(
+      ltHandle,
+      computeDesc.descriptor(),
+      Adesc.descriptor(),
+      Bdesc.descriptor(),
+      Cdesc.descriptor(),
+      Cdesc.descriptor(),
+      Bdesc.descriptor(),
+      Cdesc.descriptor(),
+      Cdesc.descriptor(),
+      preference.descriptor(),
+      alpha_ptr,
+      mat1_ptr,
+      mat2_ptr,
+      beta_ptr,
+      result_ptr,
+      result_ptr,
+      ltworkspace.ptr,
+      ltworkspace.size,
+      at::cuda::getCurrentCUDAStream(),
+      &heuristicResult,
+      &returnedResult));
+#else
   TORCH_CUDABLAS_CHECK(cublasLtMatmulAlgoGetHeuristic(
       ltHandle,
       computeDesc.descriptor(),
@@ -1826,6 +1889,7 @@ bool gemm_and_bias(
       1,
       &heuristicResult,
       &returnedResult));
+#endif
   cublasStatus_t cublasStatus = CUBLAS_STATUS_SUCCESS;
   if (returnedResult == 0) {
     cublasStatus = CUBLAS_STATUS_NOT_SUPPORTED;
@@ -2200,6 +2264,30 @@ void scaled_gemm(
   int returnedResult = 0;
   cublasLtHandle_t ltHandle = at::cuda::getCurrentCUDABlasLtHandle();
 
+#ifndef USE_ROCM
+  TORCH_CUDABLAS_CHECK(tunable::getTunedCublasLtMatmulHeuristic(
+      ltHandle,
+      computeDesc.descriptor(),
+      Adesc.descriptor(),
+      Bdesc.descriptor(),
+      Cdesc.descriptor(),
+      Ddesc.descriptor(),
+      Bdesc.descriptor(),
+      Cdesc.descriptor(),
+      Ddesc.descriptor(),
+      preference.descriptor(),
+      alpha_ptr,
+      mat1_ptr,
+      mat2_ptr,
+      beta_ptr,
+      dummy_C_ptr,
+      result_ptr,
+      ltworkspace.ptr,
+      ltworkspace.size,
+      stream,
+      &heuristicResult,
+      &returnedResult));
+#else
   TORCH_CUDABLAS_CHECK(cublasLtMatmulAlgoGetHeuristic(
       ltHandle,
       computeDesc.descriptor(),
@@ -2211,6 +2299,7 @@ void scaled_gemm(
       1,
       &heuristicResult,
       &returnedResult));
+#endif
   if (returnedResult == 0) {
 #ifndef USE_ROCM
     TORCH_CUDABLAS_CHECK(CUBLAS_STATUS_NOT_SUPPORTED);

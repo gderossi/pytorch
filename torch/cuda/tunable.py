@@ -93,19 +93,36 @@ among all that were successfully profiled will be chosen. A profile might fail
 if the given solution doesn't achieve the same accuracy as the default
 implementation or if the solution returns an error code.
 
+This tuning behavior applies to ROCm TunableOp implementations. CUDA cuBLASLt
+support uses a narrower heuristic autotuning path: it asks cuBLASLt for a
+configurable number of heuristic algorithms, times those candidates, and caches
+the fastest result. The ROCm profiling controls for max tuning duration, max
+tuning iterations, warmup, rotating buffer, instruction cache flushing, and
+numerical checking do not affect CUDA cuBLASLt heuristic autotuning.
+
 Current Tunable Operators
 =========================
 
 TunableGemm for ROCm
 --------------------
 
-Currently only a TunableGemm for ROCm is implemented. Note that CUDA builds of
-PyTorch will function correctly when using TunableOp but the only solution
-available to CUDA builds is the 'Default' implementation i.e. the original
-cuBLAS default, now called through TunableOp. Any call to at::cuda::blas::gemm()
-or ::bgemm() will be routed through TunableOp when enabled. Calling gemm() for a
-given set of input arguments (transa, transb, m, n, k) will attempt to use the
-fastest available implementation across both rocblas and hipblaslt.
+TunableGemm for ROCm is implemented. On CUDA, enabling TunableOp enables
+cuBLASLt heuristic autotuning in the CUDA BLAS paths that already use cuBLASLt.
+Calling gemm() for a given set of input arguments (transa, transb, m, n, k) on
+ROCm will attempt to use the fastest available implementation across both
+rocblas and hipblaslt.
+
+cuBLASLt Heuristic Autotuning for CUDA
+--------------------------------------
+
+CUDA cuBLASLt heuristic autotuning is controlled through the same TunableOp
+enable, tuning enable, filename, result cache, and validator APIs. It does not
+route CUDA GEMM through the ROCm TunableGemm implementation and it only applies
+to CUDA BLAS paths that already use cuBLASLt. The number of cuBLASLt heuristic
+candidates is controlled by set_cublaslt_requested_algo_count() or
+PYTORCH_TUNABLEOP_CUBLASLT_REQUESTED_ALGO_COUNT, which defaults to 8. If this
+count is 1, autotuning is skipped and PyTorch uses the top cuBLASLt heuristic
+result.
 
 Offline Tuning
 ==============
@@ -201,6 +218,8 @@ __all__ = [
     "get_max_tuning_duration",
     "set_max_tuning_iterations",
     "get_max_tuning_iterations",
+    "set_cublaslt_requested_algo_count",
+    "get_cublaslt_requested_algo_count",
     "set_filename",
     "get_filename",
     "get_results",
@@ -252,31 +271,47 @@ def record_untuned_is_enabled() -> bool:
 
 
 def set_max_tuning_duration(duration: int) -> None:
-    r"""Set max time in milliseconds to spend tuning a given solution.
+    r"""Set max time in milliseconds to spend tuning a given ROCm solution.
 
     If both max tuning duration and iterations are set, the smaller of the two
     will be honored. At minimum 1 tuning iteration will always be run.
+    This does not affect CUDA cuBLASLt heuristic autotuning.
     """
     torch._C._cuda_tunableop_set_max_tuning_duration(duration)  # type: ignore[attr-defined]
 
 
 def get_max_tuning_duration() -> int:
-    r"""Get max time to spend tuning a given solution."""
+    r"""Get max time to spend tuning a given ROCm solution."""
     return torch._C._cuda_tunableop_get_max_tuning_duration()  # type: ignore[attr-defined]
 
 
 def set_max_tuning_iterations(iterations: int) -> None:
-    r"""Set max number of iterations to spend tuning a given solution.
+    r"""Set max number of iterations to spend tuning a given ROCm solution.
 
     If both max tuning duration and iterations are set, the smaller of the two
     will be honored. At minimum 1 tuning iteration will always be run.
+    This does not affect CUDA cuBLASLt heuristic autotuning.
     """
     torch._C._cuda_tunableop_set_max_tuning_iterations(iterations)  # type: ignore[attr-defined]
 
 
 def get_max_tuning_iterations() -> int:
-    r"""Get max iterations to spend tuning a given solution."""
+    r"""Get max iterations to spend tuning a given ROCm solution."""
     return torch._C._cuda_tunableop_get_max_tuning_iterations()  # type: ignore[attr-defined]
+
+
+def set_cublaslt_requested_algo_count(count: int) -> None:
+    r"""Set the number of cuBLASLt heuristic algorithms to request for CUDA autotuning.
+
+    Values less than 1 are clamped to 1. A count of 1 disables new autotuning
+    (the top heuristic result is used directly unless a cached algorithm exists).
+    """
+    torch._C._cuda_tunableop_set_cublaslt_requested_algo_count(count)  # type: ignore[attr-defined]
+
+
+def get_cublaslt_requested_algo_count() -> int:
+    r"""Get the number of cuBLASLt heuristic algorithms requested for CUDA autotuning."""
+    return torch._C._cuda_tunableop_get_cublaslt_requested_algo_count()  # type: ignore[attr-defined]
 
 
 def set_filename(filename: str, insert_device_ordinal: bool = False) -> None:

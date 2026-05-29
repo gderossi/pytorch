@@ -68,14 +68,24 @@ can be run within 30ms, whichever is smaller, and its average execution will be 
 all that were successfully profiled will be chosen. A profile might fail if the given solution doesn't achieve the same
 accuracy as the default implementation or if the solution returns an error code.
 
+This tuning behavior applies to ROCm TunableOp implementations. CUDA cuBLASLt support uses a narrower heuristic
+autotuning path: it asks cuBLASLt for a configurable number of heuristic algorithms, times those candidates, and caches
+the fastest result. The ROCm profiling controls for max tuning duration, max tuning iterations, warmup, rotating buffer,
+instruction cache flushing, and numerical checking do not affect CUDA cuBLASLt heuristic autotuning.
+
 ## Current Tunable Operators
 
 ### TunableGemm for ROCm
-Currently only a TunableGemm for ROCm is implemented. Note that CUDA builds of PyTorch will function correctly when
-using TunableOp but the only solution available to CUDA builds is the 'Default' implementation i.e. the original cuBLAS
-default, now called through TunableOp. Any call to at::cuda::blas::gemm() or ::bgemm() will be routed through TunableOp
-when enabled. Calling gemm() for a given set of input arguments (transa, transb, m, n, k) will attempt to use the
-fastest available implementation across both rocblas and hipblaslt.
+TunableGemm for ROCm is implemented. On CUDA, enabling TunableOp enables cuBLASLt heuristic autotuning in the CUDA BLAS
+paths that already use cuBLASLt. Calling gemm() for a given set of input arguments (transa, transb, m, n, k) on ROCm
+will attempt to use the fastest available implementation across both rocblas and hipblaslt.
+
+### cuBLASLt Heuristic Autotuning for CUDA
+CUDA cuBLASLt heuristic autotuning is controlled through the same TunableOp enable, tuning enable, filename, result
+cache, and validator APIs. It does not route CUDA GEMM through the ROCm TunableGemm implementation and it only applies
+to CUDA BLAS paths that already use cuBLASLt. The number of cuBLASLt heuristic candidates is controlled by
+`set_cublaslt_requested_algo_count()` or `PYTORCH_TUNABLEOP_CUBLASLT_REQUESTED_ALGO_COUNT`, which defaults to 8. If this
+count is 1, autotuning is skipped and PyTorch uses the top cuBLASLt heuristic result.
 
 ## Offline Tuning
 
@@ -145,15 +155,16 @@ programmatically since the settings become fixed. Use the C++ or Python APIs ins
 | PYTORCH_TUNABLEOP_VERBOSE | Default is 0. Set to 1 to enable basic logging. 2 for basic tuning status. 3 for full trace. |
 | PYTORCH_TUNABLEOP_VERBOSE_FILENAME | Default is "err" for stderr. Set to "out" for stdout or a filename for capturing verbose logging. |
 | PYTORCH_TUNABLEOP_FILENAME | Default is 'tunableop_results.csv'. |
-| PYTORCH_TUNABLEOP_NUMERICAL_CHECK | Default is off. Set 'atol_rtol' to enable, for example "1e-5_1e-5". |
+| PYTORCH_TUNABLEOP_NUMERICAL_CHECK | Default is off. Set 'atol_rtol' to enable, for example "1e-5_1e-5". Applies to ROCm TunableOp profiling. |
 | PYTORCH_TUNABLEOP_ROCBLAS_ENABLED | Default is 1. Set to 0 to disable rocblas being considered during tuning. |
 | PYTORCH_TUNABLEOP_HIPBLASLT_ENABLED | Default is 1. Set to 0 to disable hipblaslt being considered during tuning. |
-| PYTORCH_TUNABLEOP_MAX_TUNING_DURATION_MS | Default is 30. Unit is milliseconds. |
-| PYTORCH_TUNABLEOP_MAX_TUNING_ITERATIONS | Default is 100. |
-| PYTORCH_TUNABLEOP_MAX_WARMUP_DURATION_MS | Default is 0, meaning it is not used. Unit is milliseconds. |
-| PYTORCH_TUNABLEOP_MAX_WARMUP_ITERATIONS | Default is 0, meaning it is not used. |
-| PYTORCH_TUNABLEOP_ICACHE_FLUSH_ENABLED | Default is 1. Set to 0 to disable. |
-| PYTORCH_TUNABLEOP_ROTATING_BUFFER_SIZE | Default (or < 0) is to query L2 cache size. Set to 0 to disable. Otherwise, set to the number of MiB to use for the pool of operator parameters. For example, setting this to the size of your device's memory cache will guarantee that every tuning iteration will use a cold cache. |
+| PYTORCH_TUNABLEOP_MAX_TUNING_DURATION_MS | Default is 30. Unit is milliseconds. Applies to ROCm TunableOp profiling. |
+| PYTORCH_TUNABLEOP_MAX_TUNING_ITERATIONS | Default is 100. Applies to ROCm TunableOp profiling. |
+| PYTORCH_TUNABLEOP_CUBLASLT_REQUESTED_ALGO_COUNT | Default is 8. Number of cuBLASLt heuristic algorithms to request for autotuning. |
+| PYTORCH_TUNABLEOP_MAX_WARMUP_DURATION_MS | Default is 0, meaning it is not used. Unit is milliseconds. Applies to ROCm TunableOp profiling. |
+| PYTORCH_TUNABLEOP_MAX_WARMUP_ITERATIONS | Default is 0, meaning it is not used. Applies to ROCm TunableOp profiling. |
+| PYTORCH_TUNABLEOP_ICACHE_FLUSH_ENABLED | Default is 1. Set to 0 to disable. Applies to ROCm TunableOp profiling. |
+| PYTORCH_TUNABLEOP_ROTATING_BUFFER_SIZE | Default (or < 0) is to query L2 cache size. Set to 0 to disable. Otherwise, set to the number of MiB to use for the pool of operator parameters. For example, setting this to the size of your device's memory cache will guarantee that every tuning iteration will use a cold cache. Applies to ROCm TunableOp profiling. |
 | PYTORCH_TUNABLEOP_BLAS_LOG | Default is 0. Set to 1 to enable. Write BLAS parameters to tuning CSV file. |
 
 ### Python Interface
@@ -167,13 +178,15 @@ All python APIs exist in the `torch.cuda.tunable` module.
 | tuning_is_enabled() -> bool | |
 | record_untuned_enable(val: bool = True) -> None | Default is True. |
 | record_untuned_is_enabled() -> bool | |
-| set_max_tuning_duration(duration: int) -> None | |
+| set_max_tuning_duration(duration: int) -> None | Applies to ROCm TunableOp profiling. |
 | get_max_tuning_duration() -> int | |
-| set_max_tuning_iterations(iterations: int) -> None | |
+| set_max_tuning_iterations(iterations: int) -> None | Applies to ROCm TunableOp profiling. |
 | get_max_tuning_iterations() -> int | |
+| set_cublaslt_requested_algo_count(count: int) -> None | Applies to CUDA cuBLASLt heuristic autotuning. |
+| get_cublaslt_requested_algo_count() -> int | Applies to CUDA cuBLASLt heuristic autotuning. |
 | set_filename(filename: str, insert_device_ordinal: bool = False) -> None | |
 | get_filename() -> str | |
-| set_numerical_check_tolerances(enable: bool, atol: float, rtol: float) -> None | Enable or disable numerical checking; atol and rtol default to 1e-5.
+| set_numerical_check_tolerances(enable: bool, atol: float, rtol: float) -> None | Enable or disable numerical checking for ROCm TunableOp profiling; atol and rtol default to 1e-5.
 | get_results() -> Tuple[str, str, str, float] | |
 | get_validators() -> Tuple[str, str] | |
 | read_file(filename: Optional[str] = None) -> None | If filename not given, it will call get_filename(). |
@@ -194,10 +207,12 @@ at::cuda::tunable::getTuningContext()->EnableTunableOp(true);
 | bool IsTunableOpEnabled() const; | |
 | void EnableTuning(bool value); | |
 | bool IsTuningEnabled() const; | |
-| void SetMaxTuningDurationMs(int max_duration_ms); | |
+| void SetMaxTuningDurationMs(int max_duration_ms); | Applies to ROCm TunableOp profiling. |
 | int GetMaxTuningDurationMs() const; | |
-| void SetMaxTuningIterations(int max_iter); | |
+| void SetMaxTuningIterations(int max_iter); | Applies to ROCm TunableOp profiling. |
 | int GetMaxTuningIterations() const; | |
+| void SetCublasLtRequestedAlgoCount(int count); | Applies to CUDA cuBLASLt heuristic autotuning. |
+| int GetCublasLtRequestedAlgoCount() const; | Applies to CUDA cuBLASLt heuristic autotuning. |
 | TuningResults GetTuningResults(); | |
 | void SetFilename(const std::string& filename, bool insert_device_ordinal=false); | |
 | std::string GetFilename() const; | |

@@ -16,6 +16,7 @@
 #include <torch/version.h>
 
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -357,6 +358,24 @@ TuningResultsValidator::TuningResultsValidator() {
           return hipblaslt_version == k ? OK : FAIL;
         });
   }
+#else
+  {
+    auto get_cublaslt_version = []() {
+      return c10::str(cublasLtGetVersion());
+    };
+    RegisterValidator(
+        "CUBLASLT_VERSION",
+        get_cublaslt_version,
+        [get_cublaslt_version](auto&& k) {
+          std::string cublaslt_version = get_cublaslt_version();
+          TUNABLE_LOG1(
+              "CUBLASLT_VERSION validation: expect ",
+              k,
+              " to match ",
+              cublaslt_version);
+          return cublaslt_version == k ? OK : FAIL;
+        });
+  }
 #endif
 }
 
@@ -481,6 +500,7 @@ TuningContext::TuningContext() :
     numerics_check_enable_{false},
     max_tuning_duration_ms_{30},
     max_tuning_iterations_{100},
+    cublaslt_requested_algo_count_{8},
     max_warmup_duration_ms_{0},
     max_warmup_iterations_{0},
     icache_flush_{true},
@@ -654,6 +674,19 @@ int TuningContext::GetMaxTuningIterations() const {
     return val < 0 ? 0 : val;
   }
   return max_tuning_iterations_;
+}
+
+void TuningContext::SetCublasLtRequestedAlgoCount(int count) {
+  cublaslt_requested_algo_count_ = std::max(1, count);
+}
+
+int TuningContext::GetCublasLtRequestedAlgoCount() const {
+  static const auto env = c10::utils::get_env(
+      "PYTORCH_TUNABLEOP_CUBLASLT_REQUESTED_ALGO_COUNT");
+  if (env.has_value()) {
+    return std::max(1, stoi(env.value()));
+  }
+  return cublaslt_requested_algo_count_;
 }
 
 void TuningContext::SetMaxWarmupDurationMs(int max_duration_ms) {

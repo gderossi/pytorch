@@ -92,6 +92,8 @@ def tunableop_matmul(device, dtype, result_filename=None, offline=False):
     else:
         if result_filename is not None:
             torch.cuda.tunable.set_filename(result_filename)
+    if not torch.version.hip:
+        torch.backends.cuda.preferred_blas_library("cublaslt")
 
     torch.cuda.tunable.set_max_tuning_duration(1)
     A = torch.randn((17, 17), device=device, dtype=dtype)
@@ -136,14 +138,27 @@ class TestLinalg(TestCase):
         # Initialize and then tear down TunableOp
         import glob
         import os
+        prev_cublaslt_count = (
+            torch.cuda.tunable.get_cublaslt_requested_algo_count()
+            if torch.cuda.is_available()
+            else None
+        )
         self._set_tunableop_defaults()
         torch.cuda.tunable.enable(True)
 
         try:
-            yield
+            if not TEST_WITH_ROCM:
+                with blas_library_context("cublaslt"):
+                    yield
+            else:
+                yield
         finally:
             # disables TunableOp
             torch.cuda.tunable.enable(False)
+            if prev_cublaslt_count is not None:
+                torch.cuda.tunable.set_cublaslt_requested_algo_count(
+                    prev_cublaslt_count
+                )
 
             # clean up, remove any files that were generated
             results_filename = torch.cuda.tunable.get_filename()
@@ -182,6 +197,7 @@ class TestLinalg(TestCase):
         torch.cuda.tunable.set_max_tuning_duration(30)
         torch.cuda.tunable.set_max_tuning_iterations(100)
         torch.cuda.tunable.set_rotating_buffer_size(-1)
+        torch.cuda.tunable.set_cublaslt_requested_algo_count(8)
         torch.cuda.tunable.set_numerical_check_tolerances(False)
         ordinal = torch.cuda.current_device()
 
@@ -5522,6 +5538,288 @@ class TestLinalg(TestCase):
         # Test negative value, which will return the l2 cache size
         torch.cuda.tunable.set_rotating_buffer_size(-1)
         self.assertEqual(torch.cuda.tunable.get_rotating_buffer_size(), l2_cache_size)
+
+    @onlyCUDA
+    @skipCUDAIfRocm
+    @dtypes(torch.float)
+    def test_cublaslt_requested_algo_count_tunableop(self, device, dtype):
+        # The env var, if set, would shadow the setter and make this test flaky.
+        import os
+        env_key = "PYTORCH_TUNABLEOP_CUBLASLT_REQUESTED_ALGO_COUNT"
+        prev_env = os.environ.pop(env_key, None)
+        self._set_tunableop_defaults()
+        original = torch.cuda.tunable.get_cublaslt_requested_algo_count()
+        try:
+            torch.cuda.tunable.set_cublaslt_requested_algo_count(7)
+            self.assertEqual(torch.cuda.tunable.get_cublaslt_requested_algo_count(), 7)
+            torch.cuda.tunable.set_cublaslt_requested_algo_count(1)
+            self.assertEqual(torch.cuda.tunable.get_cublaslt_requested_algo_count(), 1)
+            torch.cuda.tunable.set_cublaslt_requested_algo_count(0)
+            self.assertEqual(torch.cuda.tunable.get_cublaslt_requested_algo_count(), 1)
+            torch.cuda.tunable.set_cublaslt_requested_algo_count(-7)
+            self.assertEqual(torch.cuda.tunable.get_cublaslt_requested_algo_count(), 1)
+        finally:
+            torch.cuda.tunable.set_cublaslt_requested_algo_count(original)
+            if prev_env is not None:
+                os.environ[env_key] = prev_env
+
+    @onlyCUDA
+    @skipCUDAIfRocm
+    @dtypes(torch.half)
+    def test_cublaslt_requested_algo_count_one_tunableop(self, device, dtype):
+        with blas_library_context("cublaslt"):
+            a = torch.randn(23, 19, device=device, dtype=dtype)
+            b = torch.randn(19, 31, device=device, dtype=dtype)
+            expected = torch.mm(a, b)
+
+            with self._tunableop_ctx():
+                torch.cuda.tunable.set_cublaslt_requested_algo_count(1)
+                ref_num_results = len(torch.cuda.tunable.get_results())
+
+                with self.assertWarnsRegex(UserWarning, "Autotuning will not run"):
+                    actual = torch.mm(a, b)
+
+                self.assertEqual(actual, expected)
+                self.assertEqual(len(torch.cuda.tunable.get_results()), ref_num_results)
+
+    @onlyCUDA
+    @skipCUDAIfRocm
+    @dtypes(torch.half)
+    def test_cublaslt_addmm_dtype_tunableop(self, device, dtype):
+        def cublaslt_results():
+            return [
+                result for result in torch.cuda.tunable.get_results()
+                if result[0] == "CublasLtMatmulHeuristic"
+            ]
+
+        with blas_library_context("cublaslt"):
+            a = torch.randn(29, 31, device=device, dtype=dtype)
+            b = torch.randn(31, 37, device=device, dtype=dtype)
+            bias = torch.randn(37, device=device, dtype=torch.float32)
+            expected = torch.addmm(bias, a, b, out_dtype=torch.float32)
+
+            with self._tunableop_ctx():
+                torch.cuda.tunable.set_cublaslt_requested_algo_count(8)
+                ref_num_results = len(cublaslt_results())
+
+                actual = torch.addmm(bias, a, b, out_dtype=torch.float32)
+
+                self.assertEqual(actual, expected)
+                self.assertEqual(actual.dtype, torch.float32)
+                self.assertEqual(len(cublaslt_results()) - ref_num_results, 1)
+
+    @onlyCUDA
+    @skipCUDAIfRocm
+    @dtypes(torch.half)
+    def test_cublaslt_tunableop_ops(self, device, dtype):
+        def cublaslt_results():
+            return [
+                result for result in torch.cuda.tunable.get_results()
+                if result[0] == "CublasLtMatmulHeuristic"
+            ]
+
+        with blas_library_context("cublaslt"):
+            mm_a = torch.randn(61, 67, device=device, dtype=dtype)
+            mm_b = torch.randn(67, 71, device=device, dtype=dtype)
+            bmm_a = torch.randn(3, 73, 79, device=device, dtype=dtype)
+            bmm_b = torch.randn(3, 79, 83, device=device, dtype=dtype)
+            addmm_self = torch.randn(89, device=device, dtype=dtype)
+            addmm_a = torch.randn(97, 101, device=device, dtype=dtype)
+            addmm_b = torch.randn(101, 89, device=device, dtype=dtype)
+
+            expected_mm = torch.mm(mm_a, mm_b)
+            expected_bmm = torch.bmm(bmm_a, bmm_b)
+            expected_addmm = torch.addmm(addmm_self, addmm_a, addmm_b)
+
+            with self._tunableop_ctx():
+                torch.cuda.tunable.set_cublaslt_requested_algo_count(8)
+                ref_num_results = len(cublaslt_results())
+
+                actual_mm = torch.mm(mm_a, mm_b)
+                actual_bmm = torch.bmm(bmm_a, bmm_b)
+                actual_addmm = torch.addmm(addmm_self, addmm_a, addmm_b)
+
+                self.assertEqual(actual_mm, expected_mm)
+                self.assertEqual(actual_bmm, expected_bmm)
+                self.assertEqual(actual_addmm, expected_addmm)
+                self.assertEqual(len(cublaslt_results()) - ref_num_results, 3)
+
+    @onlyCUDA
+    @skipCUDAIfRocm
+    @dtypes(torch.half)
+    def test_cublaslt_tunableop_cuda_graph(self, device, dtype):
+        with blas_library_context("cublaslt"):
+            a = torch.randn(37, 41, device=device, dtype=dtype)
+            b = torch.randn(41, 43, device=device, dtype=dtype)
+            out = torch.empty(37, 43, device=device, dtype=dtype)
+            expected = torch.mm(a, b)
+
+            with self._tunableop_ctx():
+                torch.cuda.tunable.set_cublaslt_requested_algo_count(8)
+                torch.mm(a, b, out=out)
+                torch.cuda.synchronize()
+
+                graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(graph):
+                    torch.mm(a, b, out=out)
+
+                graph.replay()
+                torch.cuda.synchronize()
+                self.assertEqual(out, expected)
+
+    @onlyCUDA
+    @skipCUDAIfRocm
+    @dtypes(torch.half)
+    def test_cublaslt_tunableop_tuning_disabled(self, device, dtype):
+        def cublaslt_results():
+            return [
+                result for result in torch.cuda.tunable.get_results()
+                if result[0] == "CublasLtMatmulHeuristic"
+            ]
+
+        with blas_library_context("cublaslt"):
+            a = torch.randn(41, 47, device=device, dtype=dtype)
+            b = torch.randn(47, 53, device=device, dtype=dtype)
+            expected = torch.mm(a, b)
+
+            with self._tunableop_ctx():
+                torch.cuda.tunable.set_cublaslt_requested_algo_count(8)
+                torch.cuda.tunable.tuning_enable(False)
+                ref_num_results = len(cublaslt_results())
+
+                with self.assertWarnsRegex(UserWarning, "tuning is disabled"):
+                    actual = torch.mm(a, b)
+
+                self.assertEqual(actual, expected)
+                self.assertEqual(len(cublaslt_results()), ref_num_results)
+
+    @onlyCUDA
+    @skipCUDAIfRocm
+    @dtypes(torch.half)
+    def test_cublaslt_tunableop_cached_algo_reuse(self, device, dtype):
+        def cublaslt_results():
+            return [
+                result for result in torch.cuda.tunable.get_results()
+                if result[0] == "CublasLtMatmulHeuristic"
+            ]
+
+        with blas_library_context("cublaslt"):
+            a = torch.randn(43, 47, device=device, dtype=dtype)
+            b = torch.randn(47, 53, device=device, dtype=dtype)
+            expected = torch.mm(a, b)
+
+            with self._tunableop_ctx():
+                torch.cuda.tunable.set_cublaslt_requested_algo_count(8)
+                ref_results = cublaslt_results()
+
+                # First call: cache miss -> autotune adds exactly one tuned entry.
+                first = torch.mm(a, b)
+                after_first = cublaslt_results()
+                new_entries = [r for r in after_first if r not in ref_results]
+                self.assertEqual(len(new_entries), 1)
+                self.assertNotEqual(new_entries[0][2], "Default")
+
+                # Second call with identical inputs exercises the cache-hit path:
+                # Lookup -> algoConfigFromName -> initializeAlgo ->
+                # cublasLtMatmulAlgoCheck -> reuse. No new entry should be added.
+                second = torch.mm(a, b)
+                # get_results() iterates a std::unordered_map; sort for stability.
+                self.assertEqual(sorted(cublaslt_results()), sorted(after_first))
+
+                self.assertEqual(first, expected)
+                self.assertEqual(second, expected)
+
+    @onlyCUDA
+    @skipCUDAIfRocm
+    @dtypes(torch.half)
+    def test_cublaslt_tunableop_misaligned_d_separate_entries(self, device, dtype):
+        def cublaslt_results():
+            return [
+                result for result in torch.cuda.tunable.get_results()
+                if result[0] == "CublasLtMatmulHeuristic"
+            ]
+
+        M, K, N = 53, 67, 71
+        a = torch.randn(M, K, device=device, dtype=dtype)
+        b = torch.randn(K, N, device=device, dtype=dtype)
+        expected = torch.mm(a, b)
+
+        with self._tunableop_ctx():
+            torch.cuda.tunable.set_cublaslt_requested_algo_count(8)
+            ref_count = len(cublaslt_results())
+
+            out_aligned = torch.empty(M, N, device=device, dtype=dtype)
+            self.assertEqual(out_aligned.data_ptr() % 256, 0)
+            torch.mm(a, b, out=out_aligned)
+            self.assertEqual(out_aligned, expected)
+            after_aligned = len(cublaslt_results())
+            self.assertEqual(after_aligned - ref_count, 1)
+
+            base = torch.empty(M * N + 1, device=device, dtype=dtype)
+            out_misaligned = base[1:M * N + 1].view(M, N)
+            self.assertNotEqual(out_misaligned.data_ptr() % 256, 0)
+            torch.mm(a, b, out=out_misaligned)
+            self.assertEqual(out_misaligned, expected)
+            after_misaligned = len(cublaslt_results())
+            # Distinct cache entry because real_d_align differs.
+            self.assertEqual(after_misaligned - after_aligned, 1)
+
+            real_d_aligns = set()
+            for result in cublaslt_results():
+                for segment in result[1].split("|"):
+                    if segment.startswith("real_d_align="):
+                        real_d_aligns.add(segment)
+            self.assertEqual(len(real_d_aligns), 2)
+
+    @onlyCUDA
+    @skipCUDAIfRocm
+    @dtypes(torch.half, torch.bfloat16, torch.float)
+    @parametrize("shape", [(53, 61, 67), (128, 128, 128), (97, 7, 191)])
+    def test_cublaslt_tunableop_numerical_match(self, device, dtype, shape):
+        m, k, n = shape
+        with blas_library_context("cublaslt"):
+            a = torch.randn(m, k, device=device, dtype=dtype)
+            b = torch.randn(k, n, device=device, dtype=dtype)
+
+            with self._tunableop_ctx():
+                torch.cuda.tunable.set_cublaslt_requested_algo_count(1)
+                top_heuristic = torch.mm(a, b).clone()
+
+            with self._tunableop_ctx():
+                torch.cuda.tunable.set_cublaslt_requested_algo_count(8)
+                autotuned = torch.mm(a, b)
+
+            self.assertEqual(autotuned, top_heuristic)
+
+    @onlyCUDA
+    @skipCUDAIfRocm
+    @dtypes(torch.half)
+    def test_cublaslt_tunableop_cuda_graph_no_tuning(self, device, dtype):
+        def cublaslt_results():
+            return [
+                result for result in torch.cuda.tunable.get_results()
+                if result[0] == "CublasLtMatmulHeuristic"
+            ]
+
+        with blas_library_context("cublaslt"):
+            a = torch.randn(47, 53, device=device, dtype=dtype)
+            b = torch.randn(53, 59, device=device, dtype=dtype)
+            out = torch.empty(47, 59, device=device, dtype=dtype)
+            expected = torch.mm(a, b)
+
+            with self._tunableop_ctx():
+                torch.cuda.tunable.set_cublaslt_requested_algo_count(8)
+                ref_num_results = len(cublaslt_results())
+
+                graph = torch.cuda.CUDAGraph()
+                with self.assertWarnsRegex(UserWarning, "CUDA graph capture is in progress"):
+                    with torch.cuda.graph(graph):
+                        torch.mm(a, b, out=out)
+
+                graph.replay()
+                torch.cuda.synchronize()
+                self.assertEqual(out, expected)
+                self.assertEqual(len(cublaslt_results()), ref_num_results)
 
 
     @onlyCUDA

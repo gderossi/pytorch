@@ -188,6 +188,9 @@ class TORCH_CUDA_CPP_API TuningContext {
     void SetMaxTuningIterations(int max_iter);
     int GetMaxTuningIterations() const;
 
+    void SetCublasLtRequestedAlgoCount(int count);
+    int GetCublasLtRequestedAlgoCount() const;
+
     void SetMaxWarmupDurationMs(int max_duration_ms);
     int GetMaxWarmupDurationMs() const;
 
@@ -233,6 +236,7 @@ class TORCH_CUDA_CPP_API TuningContext {
     bool numerics_check_enable_;
     int max_tuning_duration_ms_;
     int max_tuning_iterations_;
+    int cublaslt_requested_algo_count_;
     int max_warmup_duration_ms_;
     int max_warmup_iterations_;
     bool icache_flush_;
@@ -249,6 +253,21 @@ class TORCH_CUDA_CPP_API TuningContext {
 };
 
 TORCH_CUDA_CPP_API TuningContext* getTuningContext();
+
+// Gates the TunableGemm dispatch (the templated TunableOp pipeline in
+// TunableOp.h that picks between rocblas and hipblaslt solutions). On CUDA
+// the only registered solution is "Default" so we bypass the dispatch
+// entirely; CUDA cuBLASLt autotuning is gated separately inside
+// getTunedCublasLtMatmulHeuristic() by IsTunableOpEnabled().
+#ifdef USE_ROCM
+inline bool shouldUseTunableOp() {
+  return getTuningContext()->IsTunableOpEnabled();
+}
+#else
+constexpr bool shouldUseTunableOp() {
+  return false;
+}
+#endif
 
 class ITimer {
   public:

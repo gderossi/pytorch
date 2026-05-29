@@ -284,8 +284,7 @@ bool launchGemmAndBiasCublasLt(
   const auto* self_ptr = self.has_value() ? self.value().const_data_ptr<scalar_t>() : static_cast<const scalar_t*>(nullptr);
 
 
-  const auto tuning_ctx = at::cuda::tunable::getTuningContext();
-  if (tuning_ctx->IsTunableOpEnabled()) {
+  if (at::cuda::tunable::shouldUseTunableOp()) {
     // TODO: maybe also return some success state?
     launchTunableGemmAndBias<scalar_t>(
       args, alpha, self_ptr, activation_to_gemm_and_blas_arg(activation)
@@ -429,9 +428,6 @@ Tensor& addmm_out_cuda_impl(Tensor& result, const Tensor& self, const Tensor& ma
       #ifdef USE_ROCM
       TORCH_CHECK(false, "float output with half input is not enabled for ROCm");
       #else
-      if (at::cuda::tunable::getTuningContext()->IsTunableOpEnabled()) {
-       TORCH_CHECK(false, "Tunable GEMM is not supported for float output with reduced float input");
-      }
       AT_DISPATCH_REDUCED_FLOATING_TYPES(
         scalar_type,
         "addmm_cuda_lt",
