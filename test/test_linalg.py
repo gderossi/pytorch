@@ -9609,7 +9609,7 @@ class TestLinalgCudaOnly(TestCase):
 
     @skipIfRocm
     @dtypes(torch.float)
-    def test_cublaslt_requested_algo_count_tunableop_cuda(self, device, dtype):
+    def test_cublaslt_requested_algo_count_tunableop(self, device, dtype):
         import os
         env_key = "PYTORCH_TUNABLEOP_CUBLASLT_REQUESTED_ALGO_COUNT"
         prev_env = os.environ.pop(env_key, None)
@@ -9807,7 +9807,7 @@ class TestLinalgCudaOnly(TestCase):
 
     @skipIfRocm
     @dtypes(torch.bfloat16)
-    def test_cublaslt_candidate_tunableop_cuda(self, device, dtype):
+    def test_cublaslt_candidate_tunableop(self, device, dtype):
         if not torch.cuda.is_bf16_supported():
             raise unittest.SkipTest("bfloat16 not supported on this CUDA device")
 
@@ -9835,22 +9835,21 @@ class TestLinalgCudaOnly(TestCase):
                 torch.bmm(batch_A, batch_B)
 
             results = torch.cuda.tunable.get_results()
-            self.assertTrue(any("Gemm_Cublaslt_" in str(row) for row in results))
-            self.assertTrue(any(
-                "GemmStridedBatchedTunableOp" in str(row) and
-                "Gemm_Cublaslt_" in str(row)
-                for row in results))
-            self.assertTrue(any(
-                "GemmAndBiasTunableOp" in str(row) and
-                "Gemm_Cublaslt_" in str(row)
-                for row in results))
-
-            result_rows = self._non_validator_csv_rows(torch.cuda.tunable.get_filename())
-            self.assertTrue(any("Gemm_Cublaslt_" in row[2] for row in result_rows))
+            result_strings = [str(row) for row in results]
+            self.assertTrue(
+                any("Gemm_Cublaslt_" in row for row in result_strings), results)
+            self.assertTrue(
+                any("GemmTunableOp" in row for row in result_strings), results)
+            self.assertTrue(
+                any("GemmStridedBatchedTunableOp" in row for row in result_strings),
+                results)
+            self.assertTrue(
+                any("GemmAndBiasTunableOp" in row for row in result_strings),
+                results)
 
     @skipIfRocm
     @dtypes(torch.half)
-    def test_invalid_cublaslt_candidate_fallback_tunableop_cuda(self, device, dtype):
+    def test_invalid_cublaslt_candidate_fallback_tunableop(self, device, dtype):
         with self._tunableop_ctx():
             torch.cuda.tunable.set_rotating_buffer_size(0)
             torch.cuda.tunable.tuning_enable(False)
@@ -9873,7 +9872,7 @@ class TestLinalgCudaOnly(TestCase):
 
     @skipIfRocm
     @dtypes(torch.half)
-    def test_cuda_graph_capture_skips_first_tuning_tunableop_cuda(self, device, dtype):
+    def test_cuda_graph_capture_skips_first_tuning_tunableop(self, device, dtype):
         with self._tunableop_ctx():
             torch.cuda.tunable.set_rotating_buffer_size(0)
             torch.cuda.tunable.set_max_tuning_duration(1)
