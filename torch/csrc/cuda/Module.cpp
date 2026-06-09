@@ -43,6 +43,7 @@
 #include <torch/csrc/autograd/profiler_kineto.h>
 #include <torch/csrc/profiler/orchestration/observer.h>
 #include <ActivityType.h>
+#include <ITraceActivity.h>
 #endif
 #include <torch/csrc/profiler/python/combined_traceback.h>
 #include <torch/csrc/python_headers.h>
@@ -56,6 +57,7 @@
 #include <cstring>
 #include <iostream>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <thread>
 #include <unordered_map>
@@ -109,12 +111,23 @@ double measureTunableOpWithCudaKernelProfile(
       "TunableOp CUDA kernel profiling mode cannot be used while another "
       "PyTorch profiler session is active");
 
+  profiler_impl::ExperimentalConfig experimental_config;
+  experimental_config.trace_only = true;
   profiler_impl::ProfilerConfig config(
-      profiler_impl::ProfilerState::KINETO);
+      profiler_impl::ProfilerState::KINETO,
+      /*report_input_shapes=*/false,
+      /*profile_memory=*/false,
+      /*with_stack=*/false,
+      /*with_flops=*/false,
+      /*with_modules=*/false,
+      experimental_config);
   bool profiler_started = false;
   std::unique_ptr<profiler::ProfilerResult> result;
+  std::set<profiler_impl::ActivityType> activities{
+      profiler_impl::ActivityType::CUDA};
   try {
-    profiler::enableProfiler(config, {profiler_impl::ActivityType::CUDA});
+    profiler::prepareProfiler(config, activities);
+    profiler::enableProfiler(config, activities);
     profiler_started = true;
     auto status = fn();
     TORCH_CHECK(status == at::cuda::tunable::OK);
@@ -129,11 +142,13 @@ double measureTunableOpWithCudaKernelProfile(
   }
 
   double duration_ns = 0.0;
-  for (const auto& event : result->events()) {
-    if (event.deviceType() == c10::DeviceType::CUDA &&
-        static_cast<libkineto::ActivityType>(event.activityType()) ==
-            libkineto::ActivityType::CONCURRENT_KERNEL) {
-      duration_ns += static_cast<double>(event.durationNs());
+  const auto* trace_activities = result->traceActivities();
+  TORCH_CHECK(
+      trace_activities != nullptr,
+      "TunableOp CUDA kernel profiling mode did not collect a Kineto trace");
+  for (const auto* activity : *trace_activities) {
+    if (activity->type() == libkineto::ActivityType::CONCURRENT_KERNEL) {
+      duration_ns += static_cast<double>(activity->duration());
     }
   }
 
