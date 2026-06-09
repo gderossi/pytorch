@@ -9199,6 +9199,7 @@ class TestLinalgCudaOnly(TestCase):
             # loop through a list of potentially used
             # environment variables.
             env_list = ["PYTORCH_TUNABLEOP_BLAS_LOG",
+                        "PYTORCH_TUNABLEOP_TUNING_MEASUREMENT_MODE",
                         "PYTORCH_TUNABLEOP_UNTUNED_FILENAME"]
             for env in env_list:
                 try:
@@ -9218,6 +9219,8 @@ class TestLinalgCudaOnly(TestCase):
         torch.cuda.tunable.set_max_tuning_duration(30)
         torch.cuda.tunable.set_max_tuning_iterations(100)
         torch.cuda.tunable.set_cublaslt_requested_algo_count(8)
+        if not TEST_WITH_ROCM:
+            torch.cuda.tunable.set_tuning_measurement_mode("cuda_events")
         torch.cuda.tunable.set_rotating_buffer_size(-1)
         torch.cuda.tunable.set_numerical_check_tolerances(False)
         ordinal = torch.cuda.current_device()
@@ -9620,6 +9623,45 @@ class TestLinalgCudaOnly(TestCase):
             torch.cuda.tunable.set_cublaslt_requested_algo_count(original)
             if prev_env is not None:
                 os.environ[env_key] = prev_env
+
+    @skipIfRocm
+    @dtypes(torch.float)
+    def test_tuning_measurement_mode_tunableop(self, device, dtype):
+        self._set_tunableop_defaults()
+        self.assertEqual(
+            torch.cuda.tunable.get_tuning_measurement_mode(), "cuda_events"
+        )
+        torch.cuda.tunable.set_tuning_measurement_mode("cuda_kernel_profile")
+        self.assertEqual(
+            torch.cuda.tunable.get_tuning_measurement_mode(), "cuda_kernel_profile"
+        )
+        torch.cuda.tunable.set_tuning_measurement_mode("cuda_events")
+        self.assertEqual(
+            torch.cuda.tunable.get_tuning_measurement_mode(), "cuda_events"
+        )
+        with self.assertRaisesRegex(RuntimeError, "Invalid TunableOp"):
+            torch.cuda.tunable.set_tuning_measurement_mode("invalid")
+
+    @skipIfRocm
+    @dtypes(torch.float)
+    def test_matmul_cuda_kernel_profile_tunableop(self, device, dtype):
+        if (
+            torch.profiler.ProfilerActivity.CUDA
+            not in torch.profiler.supported_activities()
+        ):
+            self.skipTest("CUDA profiler activity is required")
+
+        with self._tunableop_ctx():
+            torch.cuda.tunable.set_tuning_measurement_mode("cuda_kernel_profile")
+            torch.cuda.tunable.set_cublaslt_requested_algo_count(1)
+            torch.cuda.tunable.set_max_tuning_duration(1)
+            torch.cuda.tunable.set_max_tuning_iterations(1)
+            torch.cuda.tunable.set_rotating_buffer_size(0)
+            a = torch.randn(32, 32, device=device, dtype=dtype)
+            b = torch.randn(32, 32, device=device, dtype=dtype)
+            c = a @ b
+            self.assertEqual(c, torch.matmul(a, b))
+            self.assertGreater(len(torch.cuda.tunable.get_results()), 0)
 
     @dtypes(torch.float)
     def test_bmm_tunableop(self, device, dtype):

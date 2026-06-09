@@ -36,6 +36,23 @@ enum TORCH_CUDA_CPP_API TuningStatus {
   UNSUPPORTED = 2,
 };
 
+enum class TuningMeasurementMode {
+  CudaEvents,
+#ifndef USE_ROCM
+  CudaKernelProfile,
+#endif
+};
+
+#ifndef USE_ROCM
+using TuningKernelProfileFunc =
+    std::function<double(const std::function<TuningStatus()>&)>;
+
+TORCH_CUDA_CPP_API void RegisterTuningKernelProfileFunc(
+    TuningKernelProfileFunc fn);
+TORCH_CUDA_CPP_API double MeasureTuningKernelProfile(
+    const std::function<TuningStatus()>& fn);
+#endif
+
 // Mapping from params signature to kernel id
 class TORCH_CUDA_CPP_API ResultEntry {
   public:
@@ -201,6 +218,9 @@ class TORCH_CUDA_CPP_API TuningContext {
     void EnableICacheFlush(bool value);
     bool IsICacheFlushEnabled() const;
 
+    void SetTuningMeasurementMode(TuningMeasurementMode mode);
+    TuningMeasurementMode GetTuningMeasurementMode() const;
+
     void SetRotatingBufferSize(int size);
     int GetRotatingBufferSize() const;
 
@@ -241,6 +261,7 @@ class TORCH_CUDA_CPP_API TuningContext {
     int max_warmup_duration_ms_;
     int max_warmup_iterations_;
     bool icache_flush_;
+    TuningMeasurementMode tuning_measurement_mode_;
     int rotating_buffer_size_;
     mutable TuningResultsManager manager_;
     mutable c10::once_flag manager_init_once_;

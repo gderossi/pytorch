@@ -116,6 +116,10 @@ set_cublaslt_requested_algo_count() or
 PYTORCH_TUNABLEOP_CUBLASLT_REQUESTED_ALGO_COUNT, which defaults to 8. If this
 count is 1, only the top cuBLASLt heuristic candidate is available.
 
+CUDA tuning uses CUDA event elapsed time by default. Users targeting CUDA Graph
+replay can call set_tuning_measurement_mode("cuda_kernel_profile") to score
+candidates by CUDA kernel activity duration instead.
+
 Offline Tuning
 ==============
 
@@ -211,6 +215,8 @@ __all__ = [
     "get_max_tuning_iterations",
     "set_cublaslt_requested_algo_count",
     "get_cublaslt_requested_algo_count",
+    "set_tuning_measurement_mode",
+    "get_tuning_measurement_mode",
     "set_filename",
     "get_filename",
     "get_results",
@@ -303,6 +309,20 @@ def get_cublaslt_requested_algo_count() -> int:
         torch._C._cuda_tunableop_get_cublaslt_requested_algo_count  # type: ignore[attr-defined]
     )
     return get_count()
+
+
+def set_tuning_measurement_mode(mode: str) -> None:
+    r"""Set the timing mode used when tuning TunableOp implementations on CUDA.
+
+    Supported modes are ``"cuda_events"`` and ``"cuda_kernel_profile"``.
+    The default is ``"cuda_events"``.
+    """
+    torch._C._cuda_tunableop_set_tuning_measurement_mode(mode)  # type: ignore[attr-defined]
+
+
+def get_tuning_measurement_mode() -> str:
+    r"""Get the timing mode used when tuning TunableOp implementations on CUDA."""
+    return torch._C._cuda_tunableop_get_tuning_measurement_mode()  # type: ignore[attr-defined]
 
 
 def set_filename(filename: str, insert_device_ordinal: bool = False) -> None:

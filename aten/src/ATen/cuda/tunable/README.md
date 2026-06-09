@@ -151,6 +151,7 @@ programmatically since the settings become fixed. Use the C++ or Python APIs ins
 | PYTORCH_TUNABLEOP_MAX_TUNING_DURATION_MS | Default is 30. Unit is milliseconds. |
 | PYTORCH_TUNABLEOP_MAX_TUNING_ITERATIONS | Default is 100. |
 | PYTORCH_TUNABLEOP_CUBLASLT_REQUESTED_ALGO_COUNT | Default is 8. CUDA only. Number of cuBLASLt heuristic candidates to request. Values less than 1 are clamped to 1. |
+| PYTORCH_TUNABLEOP_TUNING_MEASUREMENT_MODE | Default is `cuda_events`. CUDA only. Set to `cuda_kernel_profile` to score candidates using CUDA kernel activity duration instead of CUDA event elapsed time. |
 | PYTORCH_TUNABLEOP_MAX_WARMUP_DURATION_MS | Default is 0, meaning it is not used. Unit is milliseconds. |
 | PYTORCH_TUNABLEOP_MAX_WARMUP_ITERATIONS | Default is 0, meaning it is not used. |
 | PYTORCH_TUNABLEOP_ICACHE_FLUSH_ENABLED | Default is 1. Set to 0 to disable. |
@@ -174,6 +175,8 @@ All python APIs exist in the `torch.cuda.tunable` module.
 | get_max_tuning_iterations() -> int | |
 | set_cublaslt_requested_algo_count(count: int) -> None | CUDA only. Values less than 1 are clamped to 1. |
 | get_cublaslt_requested_algo_count() -> int | CUDA only. |
+| set_tuning_measurement_mode(mode: str) -> None | CUDA only. Supported values are `cuda_events` and `cuda_kernel_profile`. |
+| get_tuning_measurement_mode() -> str | CUDA only. |
 | set_filename(filename: str, insert_device_ordinal: bool = False) -> None | |
 | get_filename() -> str | |
 | set_numerical_check_tolerances(enable: bool, atol: float, rtol: float) -> None | Enable or disable numerical checking; atol and rtol default to 1e-5.
@@ -201,6 +204,8 @@ at::cuda::tunable::getTuningContext()->EnableTunableOp(true);
 | int GetMaxTuningDurationMs() const; | |
 | void SetMaxTuningIterations(int max_iter); | |
 | int GetMaxTuningIterations() const; | |
+| void SetTuningMeasurementMode(TuningMeasurementMode mode); | CUDA only. |
+| TuningMeasurementMode GetTuningMeasurementMode() const; | CUDA only. |
 | TuningResults GetTuningResults(); | |
 | void SetFilename(const std::string& filename, bool insert_device_ordinal=false); | |
 | std::string GetFilename() const; | |

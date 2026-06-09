@@ -47,6 +47,57 @@
 
 namespace at::cuda::tunable {
 
+namespace {
+
+#ifndef USE_ROCM
+std::mutex kernel_profile_func_mutex;
+TuningKernelProfileFunc kernel_profile_func;
+#endif
+
+TuningMeasurementMode TuningMeasurementModeFromString(
+    const std::string& mode) {
+  if (mode == "cuda_events") {
+    return TuningMeasurementMode::CudaEvents;
+  }
+#ifndef USE_ROCM
+  if (mode == "cuda_kernel_profile") {
+    return TuningMeasurementMode::CudaKernelProfile;
+  }
+#endif
+  TORCH_CHECK(
+      false,
+      "Invalid TunableOp tuning measurement mode: ",
+      mode,
+#ifndef USE_ROCM
+      ". Expected 'cuda_events' or 'cuda_kernel_profile'.");
+#else
+      ". Expected 'cuda_events'.");
+#endif
+}
+
+} // namespace
+
+#ifndef USE_ROCM
+void RegisterTuningKernelProfileFunc(TuningKernelProfileFunc fn) {
+  std::scoped_lock l{kernel_profile_func_mutex};
+  kernel_profile_func = std::move(fn);
+}
+
+double MeasureTuningKernelProfile(
+    const std::function<TuningStatus()>& fn) {
+  TuningKernelProfileFunc profile_func;
+  {
+    std::scoped_lock l{kernel_profile_func_mutex};
+    profile_func = kernel_profile_func;
+  }
+  TORCH_CHECK(
+      profile_func,
+      "TunableOp CUDA kernel profiling mode requires PyTorch profiler "
+      "support with Kineto and CUPTI");
+  return profile_func(fn);
+}
+#endif
+
 TuningContext* getTuningContext() {
   static TuningContext tuning_context;
   return &tuning_context;
@@ -513,6 +564,7 @@ TuningContext::TuningContext() :
     max_warmup_duration_ms_{0},
     max_warmup_iterations_{0},
     icache_flush_{true},
+    tuning_measurement_mode_{TuningMeasurementMode::CudaEvents},
     rotating_buffer_size_{-1},
     results_count_from_input_file_{0},
     is_shutting_down_{false}
@@ -742,6 +794,19 @@ bool TuningContext::IsICacheFlushEnabled() const {
     return false;
   }
   return icache_flush_;
+}
+
+void TuningContext::SetTuningMeasurementMode(TuningMeasurementMode mode) {
+  tuning_measurement_mode_ = mode;
+}
+
+TuningMeasurementMode TuningContext::GetTuningMeasurementMode() const {
+  static const auto env = c10::utils::get_env(
+      "PYTORCH_TUNABLEOP_TUNING_MEASUREMENT_MODE");
+  if (env.has_value()) {
+    return TuningMeasurementModeFromString(env.value());
+  }
+  return tuning_measurement_mode_;
 }
 
 void TuningContext::SetRotatingBufferSize(int size) {

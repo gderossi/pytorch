@@ -39,6 +39,11 @@
 #include <torch/csrc/cuda/THCP.h>
 #include <torch/csrc/cuda/memory_snapshot.h>
 #include <torch/csrc/cuda/python_comm.h>
+#if defined(USE_KINETO) && defined(HAS_CUPTI) && !defined(USE_ROCM)
+#include <torch/csrc/autograd/profiler_kineto.h>
+#include <torch/csrc/profiler/orchestration/observer.h>
+#include <ActivityType.h>
+#endif
 #include <torch/csrc/profiler/python/combined_traceback.h>
 #include <torch/csrc/python_headers.h>
 #include <torch/csrc/utils/device_lazy_init.h>
@@ -48,7 +53,9 @@
 #include <torch/csrc/utils/python_strings.h>
 #include <array>
 #include <chrono>
+#include <cstring>
 #include <iostream>
+#include <mutex>
 #include <sstream>
 #include <thread>
 #include <unordered_map>
@@ -58,6 +65,88 @@ void* getCurrentCUDASolverDnHandleLazy();
 }
 
 using namespace torch;
+
+namespace {
+
+#ifndef USE_ROCM
+const char* tuningMeasurementModeName(
+    at::cuda::tunable::TuningMeasurementMode mode) {
+  switch (mode) {
+    case at::cuda::tunable::TuningMeasurementMode::CudaEvents:
+      return "cuda_events";
+    case at::cuda::tunable::TuningMeasurementMode::CudaKernelProfile:
+      return "cuda_kernel_profile";
+  }
+  TORCH_INTERNAL_ASSERT(false, "unknown TunableOp tuning measurement mode");
+}
+
+at::cuda::tunable::TuningMeasurementMode tuningMeasurementModeFromName(
+    const char* mode) {
+  if (std::strcmp(mode, "cuda_events") == 0) {
+    return at::cuda::tunable::TuningMeasurementMode::CudaEvents;
+  }
+  if (std::strcmp(mode, "cuda_kernel_profile") == 0) {
+    return at::cuda::tunable::TuningMeasurementMode::CudaKernelProfile;
+  }
+  TORCH_CHECK(
+      false,
+      "Invalid TunableOp tuning measurement mode: ",
+      mode,
+      ". Expected 'cuda_events' or 'cuda_kernel_profile'.");
+}
+
+#if defined(USE_KINETO) && defined(HAS_CUPTI)
+std::mutex tunableop_kernel_profile_mutex;
+
+double measureTunableOpWithCudaKernelProfile(
+    const std::function<at::cuda::tunable::TuningStatus()>& fn) {
+  std::scoped_lock l{tunableop_kernel_profile_mutex};
+  namespace profiler = torch::autograd::profiler;
+  namespace profiler_impl = torch::profiler::impl;
+
+  TORCH_CHECK(
+      profiler_impl::ProfilerStateBase::get() == nullptr,
+      "TunableOp CUDA kernel profiling mode cannot be used while another "
+      "PyTorch profiler session is active");
+
+  profiler_impl::ProfilerConfig config(
+      profiler_impl::ProfilerState::KINETO);
+  bool profiler_started = false;
+  std::unique_ptr<profiler::ProfilerResult> result;
+  try {
+    profiler::enableProfiler(config, {profiler_impl::ActivityType::CUDA});
+    profiler_started = true;
+    auto status = fn();
+    TORCH_CHECK(status == at::cuda::tunable::OK);
+    AT_CUDA_CHECK(cudaStreamSynchronize(at::cuda::getCurrentCUDAStream()));
+    result = profiler::disableProfiler();
+    profiler_started = false;
+  } catch (...) {
+    if (profiler_started) {
+      (void)profiler::disableProfiler();
+    }
+    throw;
+  }
+
+  double duration_ns = 0.0;
+  for (const auto& event : result->events()) {
+    if (event.deviceType() == c10::DeviceType::CUDA &&
+        static_cast<libkineto::ActivityType>(event.activityType()) ==
+            libkineto::ActivityType::CONCURRENT_KERNEL) {
+      duration_ns += static_cast<double>(event.durationNs());
+    }
+  }
+
+  TORCH_CHECK(
+      duration_ns > 0.0,
+      "TunableOp CUDA kernel profiling mode did not collect any CUDA "
+      "kernel activity records");
+  return duration_ns / 1.0e6;
+}
+#endif
+#endif
+
+} // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
 // CUDA management methods
@@ -1874,6 +1963,38 @@ PyObject* THCPModule_cuda_tunableop_get_cublaslt_requested_algo_count(
   END_HANDLE_TH_ERRORS
 }
 
+PyObject* THCPModule_cuda_tunableop_set_tuning_measurement_mode(
+    PyObject* _unused,
+    PyObject* arg) {
+  HANDLE_TH_ERRORS
+#ifdef USE_ROCM
+  TORCH_CHECK(false, "TunableOp tuning measurement mode is CUDA-only");
+#else
+  TORCH_CHECK(
+      THPUtils_checkString(arg),
+      "cuda_tunableop_set_tuning_measurement_mode expects a string, but got ",
+      THPUtils_typename(arg));
+  auto mode = tuningMeasurementModeFromName(THPUtils_unpackString(arg).c_str());
+  at::cuda::tunable::getTuningContext()->SetTuningMeasurementMode(mode);
+  Py_RETURN_NONE;
+#endif
+  END_HANDLE_TH_ERRORS
+}
+
+PyObject* THCPModule_cuda_tunableop_get_tuning_measurement_mode(
+    PyObject* _unused,
+    PyObject* noargs) {
+  HANDLE_TH_ERRORS
+#ifdef USE_ROCM
+  TORCH_CHECK(false, "TunableOp tuning measurement mode is CUDA-only");
+#else
+  const char* mode = tuningMeasurementModeName(
+      at::cuda::tunable::getTuningContext()->GetTuningMeasurementMode());
+  return THPUtils_packString(mode);
+#endif
+  END_HANDLE_TH_ERRORS
+}
+
 PyObject* THCPModule_cuda_tunableop_set_filename(
     PyObject* _unused,
     PyObject* args) {
@@ -2378,6 +2499,14 @@ static struct PyMethodDef _THCPModule_methods[] = {
      THCPModule_cuda_tunableop_get_cublaslt_requested_algo_count,
      METH_NOARGS,
      nullptr},
+    {"_cuda_tunableop_set_tuning_measurement_mode",
+     THCPModule_cuda_tunableop_set_tuning_measurement_mode,
+     METH_O,
+     nullptr},
+    {"_cuda_tunableop_get_tuning_measurement_mode",
+     THCPModule_cuda_tunableop_get_tuning_measurement_mode,
+     METH_NOARGS,
+     nullptr},
     {"_cuda_tunableop_set_filename",
      THCPModule_cuda_tunableop_set_filename,
      METH_VARARGS,
@@ -2431,6 +2560,10 @@ void initCusparseltBindings(PyObject* module);
 } // namespace shared
 
 void initModule(PyObject* module) {
+#if defined(USE_KINETO) && defined(HAS_CUPTI) && !defined(USE_ROCM)
+  at::cuda::tunable::RegisterTuningKernelProfileFunc(
+      measureTunableOpWithCudaKernelProfile);
+#endif
   python::initCommMethods(module);
   // As weird as it seems, this file is also compiled for ROCm,
   // so this condition might not always be true...

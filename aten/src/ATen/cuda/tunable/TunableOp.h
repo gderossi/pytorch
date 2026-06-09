@@ -281,7 +281,7 @@ class TunableOp {
       return timer.Duration() / num_iter;
     }
 
-    static Stats ProfileStats(Callable<ParamsT> *op, const std::vector<ParamsT*> &param, size_t num_iter, size_t &offset) {
+    static Stats ProfileStatsWithCudaEvents(Callable<ParamsT> *op, const std::vector<ParamsT*> &param, size_t num_iter, size_t &offset) {
       TuningContext* ctx = getTuningContext();
       bool do_flush = ctx->IsICacheFlushEnabled();
       std::vector<StreamTimerNoSync> timer(num_iter);
@@ -305,6 +305,42 @@ class TunableOp {
         s.sample_value(timer[i].Duration());
       }
       return s;
+    }
+
+#ifndef USE_ROCM
+    static Stats ProfileStatsWithCudaKernelProfile(Callable<ParamsT> *op, const std::vector<ParamsT*> &param, size_t num_iter, size_t &offset) {
+      TuningContext* ctx = getTuningContext();
+      bool do_flush = ctx->IsICacheFlushEnabled();
+
+      // Small Mandatory Warmup
+      // Reduces outliers
+      for (size_t i = 0; i < 2; i++) {
+        TORCH_CHECK(op->Call(param[(i+offset++)%param.size()]) == OK);
+      }
+
+      Stats s;
+      for (size_t i = 0; i < num_iter; i++) {
+        double duration_ms = MeasureTuningKernelProfile([&]() {
+          return op->Call(param[(i+offset++)%param.size()]);
+        });
+        s.sample_value(duration_ms);
+        if (do_flush) {
+          at::cuda::flush_icache();
+        }
+      }
+      return s;
+    }
+#endif
+
+    static Stats ProfileStats(Callable<ParamsT> *op, const std::vector<ParamsT*> &param, size_t num_iter, size_t &offset) {
+#ifndef USE_ROCM
+      TuningContext* ctx = getTuningContext();
+      if (ctx->GetTuningMeasurementMode() ==
+          TuningMeasurementMode::CudaKernelProfile) {
+        return ProfileStatsWithCudaKernelProfile(op, param, num_iter, offset);
+      }
+#endif
+      return ProfileStatsWithCudaEvents(op, param, num_iter, offset);
     }
 
   protected:
