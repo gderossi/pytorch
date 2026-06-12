@@ -70,6 +70,7 @@ def compare_dynamic_depthwise_conv(shape, kernel_size, stride):
 def check_symint_depthwise_conv():
     shapes = [
         ((1, 32, 16, 16), 3, 1),
+        ((2, 32, 16, 32), 3, 1),
         ((2, 32, 21, 21), 3, 1),
         ((3, 32, 32, 32), 5, 2),
     ]
@@ -103,7 +104,7 @@ def check_benchmark_runner(benchmark_iters, warmup_iters):
     ):
         for depthwise_kernel in ("native", "cudnn", "auto"):
             torch.backends.cudnn.depthwise_kernel = depthwise_kernel
-            fwd_time, bwd_time, all_time = runner.run_benchmark(1, 32, 16, 1, 3)
+            fwd_time, bwd_time, all_time = runner.run_benchmark(1, 32, 16, 32, 1, 3)
             for name, value in (
                 ("time_fwd", fwd_time),
                 ("time_bwd", bwd_time),

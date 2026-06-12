@@ -49,17 +49,69 @@ def get_cudnn_frontend_version() -> int | None:
 
 class BenchmarkRunnerDepthwiseConv:
     def __init__(self):
-        self.train_batch_sizes = [1, 2, 4, 8, 16, 32, 64]
-        self.train_in_channels = [32 * 2**i for i in range(6)]
-        self.train_heights = [112 // (2**i) for i in range(5)] + [32, 64, 128]
+        self.train_batch_sizes = [1, 8, 32]
+        self.train_in_channels = [32, 96, 384, 1024]
+        self.train_shapes = [
+            (7, 7),
+            (14, 14),
+            (28, 28),
+            (56, 56),
+            (112, 112),
+            (32, 32),
+            (64, 64),
+            (128, 128),
+            (10, 21),
+            (21, 10),
+            (30, 44),
+            (44, 30),
+            (44, 88),
+            (88, 44),
+        ]
+        self.train_extra_batch_sizes = [4, 16, 64]
+        self.train_extra_in_channels = [64, 128, 256, 512]
+        self.train_extra_shapes = [
+            (7, 7),
+            (14, 14),
+            (28, 28),
+            (56, 56),
+            (112, 112),
+            (32, 32),
+            (64, 64),
+            (128, 128),
+        ]
         self.validation_batch_sizes = [3, 12, 48]
         self.validation_in_channels = [48, 192, 768]
-        self.validation_heights = [10, 21, 30, 44, 88]
+        self.validation_shapes = [
+            (10, 10),
+            (21, 21),
+            (30, 30),
+            (44, 44),
+            (88, 88),
+            (10, 21),
+            (21, 10),
+            (30, 44),
+            (44, 30),
+            (44, 88),
+            (88, 44),
+        ]
+        self.test_batch_sizes = [5, 20]
+        self.test_in_channels = [40, 160, 640]
+        self.test_shapes = [
+            (13, 13),
+            (26, 26),
+            (52, 52),
+            (104, 104),
+            (13, 26),
+            (26, 13),
+            (32, 96),
+            (96, 32),
+        ]
         self.batch_sizes = self.train_batch_sizes
         self.in_channels = self.train_in_channels
-        self.heights = self.train_heights
+        self.shapes = self.train_shapes
         self.strides = [1, 2]
         self.kernel_sizes = [1, 3, 5]
+        self.workload_cases = []
 
         self.nb_warmup_iters = 50
         self.nb_iters = 100
@@ -68,6 +120,7 @@ class BenchmarkRunnerDepthwiseConv:
             "sm",
             "bs",
             "ch",
+            "h",
             "w",
             "filter",
             "stride",
@@ -106,25 +159,73 @@ class BenchmarkRunnerDepthwiseConv:
             "--grid",
             type=str,
             default="train",
-            choices=["train", "validation"],
+            choices=["train", "train-extra", "validation", "test"],
             help="Benchmark grid to run (default: train)",
+        )
+        self.parser.add_argument(
+            "--benchmark-iters",
+            type=int,
+            default=self.nb_iters,
+            help=f"Benchmark iterations per shape (default: {self.nb_iters})",
+        )
+        self.parser.add_argument(
+            "--warmup-iters",
+            type=int,
+            default=self.nb_warmup_iters,
+            help=f"Warmup iterations per shape (default: {self.nb_warmup_iters})",
         )
 
     def parse_args(self):
         return self.parser.parse_args()
 
+    def build_workload_cases(self, batch_sizes, in_channels, shapes):
+        return [
+            (batch_size, c, h, w, s, k)
+            for batch_size, c, (h, w), s, k in itertools.product(
+                batch_sizes,
+                in_channels,
+                shapes,
+                self.strides,
+                self.kernel_sizes,
+            )
+        ]
+
     def select_grid(self):
         if self.args.grid == "train":
             self.batch_sizes = self.train_batch_sizes
             self.in_channels = self.train_in_channels
-            self.heights = self.train_heights
-        else:
+            self.shapes = self.train_shapes
+            self.workload_cases = self.build_workload_cases(
+                self.train_batch_sizes, self.train_in_channels, self.train_shapes
+            )
+            self.workload_cases += self.build_workload_cases(
+                self.train_extra_batch_sizes,
+                self.train_extra_in_channels,
+                self.train_extra_shapes,
+            )
+        elif self.args.grid == "train-extra":
+            self.batch_sizes = self.train_extra_batch_sizes
+            self.in_channels = self.train_extra_in_channels
+            self.shapes = self.train_extra_shapes
+            self.workload_cases = self.build_workload_cases(
+                self.batch_sizes, self.in_channels, self.shapes
+            )
+        elif self.args.grid == "validation":
             self.batch_sizes = self.validation_batch_sizes
             self.in_channels = self.validation_in_channels
-            self.heights = self.validation_heights
+            self.shapes = self.validation_shapes
+            self.workload_cases = self.build_workload_cases(
+                self.batch_sizes, self.in_channels, self.shapes
+            )
+        else:
+            self.batch_sizes = self.test_batch_sizes
+            self.in_channels = self.test_in_channels
+            self.shapes = self.test_shapes
+            self.workload_cases = self.build_workload_cases(
+                self.batch_sizes, self.in_channels, self.shapes
+            )
 
-    def run_benchmark(self, batch_size, c, h, s, k):
-        w = h
+    def run_benchmark(self, batch_size, c, h, w, s, k):
         # Note: cuDNN depthwise conv only supports FP16
         x = torch.randn(
             batch_size, c, h, w, device="cuda", dtype=torch.half, requires_grad=True
@@ -194,9 +295,10 @@ class BenchmarkRunnerDepthwiseConv:
                 "name": self.args.grid,
                 "batch_sizes": self.batch_sizes,
                 "in_channels": self.in_channels,
-                "heights": self.heights,
+                "shapes": self.shapes,
                 "strides": self.strides,
                 "kernel_sizes": self.kernel_sizes,
+                "workload_count": len(self.workload_cases),
                 "warmup_iters": self.nb_warmup_iters,
                 "benchmark_iters": self.nb_iters,
             },
@@ -217,25 +319,23 @@ class BenchmarkRunnerDepthwiseConv:
 
     def run(self):
         self.args = self.parse_args()
+        self.nb_iters = self.args.benchmark_iters
+        self.nb_warmup_iters = self.args.warmup_iters
         self.select_grid()
         if self.args.device == "":
             self.args.device = torch.cuda.get_device_name().replace(" ", "-")
 
         results = pd.DataFrame()
 
-        for batch_size, c, h, s, k in itertools.product(
-            self.batch_sizes,
-            self.in_channels,
-            self.heights,
-            self.strides,
-            self.kernel_sizes,
-        ):
+        for batch_size, c, h, w, s, k in self.workload_cases:
             torch.backends.cudnn.depthwise_kernel = "native"
-            fwd_time, bwd_time, all_time = self.run_benchmark(batch_size, c, h, s, k)
+            fwd_time, bwd_time, all_time = self.run_benchmark(
+                batch_size, c, h, w, s, k
+            )
 
             torch.backends.cudnn.depthwise_kernel = "cudnn"
             fwd_time_cudnn, bwd_time_cudnn, all_time_cudnn = self.run_benchmark(
-                batch_size, c, h, s, k
+                batch_size, c, h, w, s, k
             )
 
             cudnn_speedup_fwd = fwd_time / fwd_time_cudnn
@@ -249,6 +349,7 @@ class BenchmarkRunnerDepthwiseConv:
                         batch_size,
                         c,
                         h,
+                        w,
                         k,
                         s,
                         fwd_time,

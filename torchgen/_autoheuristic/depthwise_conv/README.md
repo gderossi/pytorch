@@ -1,10 +1,21 @@
 ## Regenerating the current heuristic
-To regenerate the current heuristic with the original data, run the following scripts:
+For the full multi-machine collection workflow, see
+`BENCHMARKING_PROTOCOL.md`.
+
+To regenerate the current heuristic with the downloaded data plus any newly
+collected train, validation, and test splits, run:
 
 ```
 bash get_depthwiseconv_dataset.sh
 
-python train_decision_depthwiseconv.py *.csv
+python gen_data_depthwiseconv.py --grid train --device DEVICE
+python gen_data_depthwiseconv.py --grid validation --device DEVICE
+python gen_data_depthwiseconv.py --grid test --device DEVICE
+
+python train_decision_depthwiseconv.py \
+  [train input files ...] \
+  --validation-files [validation files ...] \
+  --test-files [test files ...]
 ```
 
 ## Dataset provenance
@@ -14,36 +25,77 @@ The benchmark grid and data-generation procedure are defined in
 device type/name, SM, cuDNN frontend version, cuDNN backend version, collection
 date, and benchmark grid.
 
-The checked-in heuristic was generated from data collected with:
+The checked-in heuristic was generated from these training inputs:
+
+|Input|Rows|SM group|
+|---|---|---|
+|`data_depthwiseconv_A100.csv`|2016|sm80|
+|`data_depthwiseconv_H100.csv`|2016|sm90|
+|`data_depthwiseconv_GB200.csv`|2016|sm100|
+|`data_depthwiseconv_GB300.csv`|2016|sm100|
+|`data_depthwiseconv_protocol_train_local.csv`|1008|sm100|
+|`data_depthwiseconv_protocol_train_extra_local.csv`|576|sm100|
+
+The local protocol data and holdout results were collected with:
 
 |Field|Value|
 |---|---|
-|PyTorch commit|655c28ee371d46906d6af0697c36718089edc173|
+|PyTorch commit|f4bdea026bdf3e86cf13216a83d6672b29ebc69e|
 |Device|NVIDIA GB200 (CUDA, sm100)|
 |cuDNN frontend version|12201 (1.22.1)|
 |cuDNN backend version|92300 (9.23.0)|
 |Collection date|2026-06-12|
 
-## Benchmarking
-To collect new data, run the benchmarking script:
+The local validation holdout has 594 rows and the local final test holdout has
+288 rows.
 
-`python gen_data_depthwiseconv.py [--device DEVICE] [--grid {train,validation}] [--output OUTPUT]`
+## Benchmarking protocol
+Collect train, validation, and final test data separately:
 
-The `--device` flag is optional, and allows you to specify a custom (shorter) label for the GPU being tested.
-Output will be saved to `data_depthwiseconv_[GRID]_[DEVICE].csv` unless `--output` is provided. Depending on the GPU, the train grid will likely take 30 minutes to 2 hours.
-The validation grid uses shapes that are not in the train grid and is intended
-to be benchmarked separately as a holdout set.
+```
+python gen_data_depthwiseconv.py --grid train --device DEVICE
+python gen_data_depthwiseconv.py --grid validation --device DEVICE
+python gen_data_depthwiseconv.py --grid test --device DEVICE
+```
+
+The `--device` flag is optional, and allows you to specify a custom shorter
+label for the GPU being tested. Output will be saved to
+`data_depthwiseconv_[GRID]_[DEVICE].csv` unless `--output` is provided. Use
+`--benchmark-iters` and `--warmup-iters` to override the default per-shape
+iteration counts.
+
+The train grid includes the original square shape family plus additional
+non-square shapes, plus targeted square cases with `bs={4,16,64}` and
+`ch={64,128,256,512}` to cover gaps from the original downloaded grid. The
+`train-extra` grid can be used to benchmark only those targeted additional
+cases when the base train grid has already been collected. The validation grid
+uses different batch sizes, channels, and shapes from the train grid and is
+used while tuning tree features or model complexity. The test grid is smaller,
+fully held out, and should be used for final reporting only.
 
 ## Heuristic generation
 To generate a new heuristic from benchmarking data, run the training script:
 
-`python train_decision_depthwiseconv.py [input files ...] [--validation-files VALIDATION_FILES ...] [--output-file OUTPUT_FILE]`
+```
+python train_decision_depthwiseconv.py \
+  [train input files ...] \
+  --validation-files [validation files ...] \
+  --test-files [test files ...] \
+  --output-file OUTPUT_FILE
+```
 
 At least one input file must be provided. If multiple files are provided, the training script will first combine all inputs into
 one dataset.
-Validation files are not used to train the decision trees; they are used only
-to print holdout accuracy and confusion matrices after the heuristic is
-generated.
+Validation and test files are not used to train the decision trees. They are
+used only to print holdout accuracy, confusion matrices, and aggregate policy
+metrics after the heuristic is generated. The policy metrics compare the
+generated heuristic against always using cuDNN and against an oracle that picks
+the faster measured implementation for each row.
+
+The generated trees use `bs`, `ch`, `h`, `w`, `filter`, `stride`, `out_h`,
+`out_w`, `out_elements`, and `kernel_work` as decision variables. Older
+square-only CSVs without an `h` column are still supported; the training script
+treats them as `h == w`.
 
 The training script attempts to generate a separate decision tree for each
 cuDNN SM heuristic group: `sm75`, `sm80`, `sm86`, `sm89`, `sm90`, `sm100`,
@@ -78,6 +130,7 @@ usage: train_decision_depthwiseconv.py [-h] [--tolerance TOLERANCE] [--max-depth
                                        [--criterion {gini,entropy,log_loss}] [--seed SEED]
                                        [--output-file OUTPUT_FILE]
                                        [--validation-files VALIDATION_FILES [VALIDATION_FILES ...]]
+                                       [--test-files TEST_FILES [TEST_FILES ...]]
                                        input_files [input_files ...]
 
 positional arguments:
@@ -102,4 +155,6 @@ options:
                         Output header path
   --validation-files VALIDATION_FILES [VALIDATION_FILES ...]
                         Optional holdout CSV files used only for validation
+  --test-files TEST_FILES [TEST_FILES ...]
+                        Optional final holdout CSV files used only for reporting
 ```

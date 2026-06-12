@@ -10,279 +10,64 @@ namespace at::native {
 
 template <typename T>
 static bool check_cudnn_depthwise_workload_sm80(
-    T stride, T filter, T w, T ch, T bs) {
+    T stride, T filter, T w, T ch, T bs, T h, T out_h, T out_w,
+    T out_elements, T kernel_work) {
   // auto-generated heuristic decision tree for cuDNN SM group 80, tolerance = 0.0
   if (stride <= 1) {
-    if (w <= 21) {
-      if (filter <= 2) {
-        if (ch <= 192) {
-          if (bs <= 12) {
-            if (bs <= 3) return true;
-            else {
-              if (w <= 10) return true;
-              else return false;
-            }
+    if (kernel_work <= 106624) {
+      if (bs <= 3) {
+        return true;
+      }
+      else return true;
+    }
+    else {
+      if (kernel_work <= 487936) {
+        if (bs <= 6) {
+          return true;
+        }
+        else return true;
+      }
+      else {
+        if (out_elements <= 57856) return true;
+        else {
+          if (out_elements <= 115712) {
+            return true;
           }
           else return true;
+        }
+      }
+    }
+  }
+  else {
+    if (ch <= 96) {
+      if (filter <= 4) {
+        if (kernel_work <= 1705984) {
+          if (out_elements <= 82944) {
+            if (out_elements <= 41472) {
+              if (out_elements <= 20736) {
+                return true;
+              }
+              else return true;
+            }
+            else return true;
+          }
+          else {
+            if (h <= 88) {
+              return false;
+            }
+            else return true;
+          }
         }
         else {
           return true;
         }
       }
       else {
-        if (ch <= 48) {
-          if (w <= 10) return true;
-          else {
-            if (bs <= 12) {
-              if (bs <= 6) {
-                if (bs <= 3) return true;
-                else {
-                  if (filter <= 4) return false;
-                  else return true;
-                }
-              }
-              else {
-                if (filter <= 4) return false;
-                else return true;
-              }
-            }
-            else return true;
-          }
-        }
+        if (out_h <= 10) return true;
         else {
-          if (ch <= 96) {
-            if (bs <= 12) {
-              if (w <= 10) return true;
-              else {
-                if (bs <= 6) return true;
-                else {
-                  if (filter <= 4) return false;
-                  else return true;
-                }
-              }
-            }
-            else return true;
-          }
-          else return true;
-        }
-      }
-    }
-    else {
-      if (w <= 30) {
-        if (ch <= 48) {
-          if (bs <= 3) {
-            if (bs <= 1) return true;
-            else return false;
-          }
-          else return true;
-        }
-        else {
-          if (ch <= 96) {
-            if (bs <= 3) {
-              if (bs <= 1) return true;
-              else {
-                if (filter <= 4) return false;
-                else return true;
-              }
-            }
-            else return true;
-          }
+          if (kernel_work <= 1446400) return false;
           else {
-            if (bs <= 3) {
-              if (ch <= 192) {
-                if (filter <= 2) {
-                  if (bs <= 1) return true;
-                  else return false;
-                }
-                else return true;
-              }
-              else return true;
-            }
-            else return true;
-          }
-        }
-      }
-      else return true;
-    }
-  }
-  else {
-    if (ch <= 96) {
-      if (filter <= 4) {
-        if (filter <= 2) {
-          if (w <= 88) {
-            if (bs <= 3) {
-              if (bs <= 1) return true;
-              else {
-                if (w <= 44) return true;
-                else {
-                  if (ch <= 48) return false;
-                  else return true;
-                }
-              }
-            }
-            else {
-              if (w <= 10) return true;
-              else {
-                if (bs <= 48) {
-                  if (w <= 21) {
-                    if (bs <= 12) return true;
-                    else {
-                      if (ch <= 48) return false;
-                      else {
-                        if (bs <= 24) return true;
-                        else return false;
-                      }
-                    }
-                  }
-                  else {
-                    if (w <= 60) return false;
-                    else {
-                      if (bs <= 24) return false;
-                      else return true;
-                    }
-                  }
-                }
-                else {
-                  if (w <= 44) {
-                    return false;
-                  }
-                  else return true;
-                }
-              }
-            }
-          }
-          else {
-            if (bs <= 12) {
-              if (bs <= 1) return true;
-              else {
-                if (w <= 120) {
-                  if (bs <= 3) {
-                    if (ch <= 48) return false;
-                    else return true;
-                  }
-                  else return false;
-                }
-                else {
-                  if (ch <= 48) {
-                    if (bs <= 6) {
-                      if (bs <= 3) return false;
-                      else return true;
-                    }
-                    else return false;
-                  }
-                  else return true;
-                }
-              }
-            }
-            else return true;
-          }
-        }
-        else {
-          if (ch <= 48) {
-            if (w <= 88) {
-              if (w <= 21) return true;
-              else {
-                if (bs <= 3) {
-                  if (bs <= 1) return true;
-                  else {
-                    if (w <= 44) return true;
-                    else return false;
-                  }
-                }
-                else {
-                  if (bs <= 48) {
-                    if (bs <= 24) {
-                      if (bs <= 6) {
-                        if (w <= 30) return true;
-                        else {
-                          if (w <= 60) return false;
-                          else return true;
-                        }
-                      }
-                      else return false;
-                    }
-                    else {
-                      if (w <= 44) return false;
-                      else return true;
-                    }
-                  }
-                  else {
-                    if (w <= 44) return false;
-                    else return true;
-                  }
-                }
-              }
-            }
-            else {
-              if (bs <= 6) {
-                if (bs <= 1) return true;
-                else {
-                  if (bs <= 3) return false;
-                  else {
-                    if (w <= 120) return false;
-                    else return true;
-                  }
-                }
-              }
-              else {
-                return true;
-              }
-            }
-          }
-          else {
-            return true;
-          }
-        }
-      }
-      else {
-        if (w <= 21) {
-          if (bs <= 6) {
-            if (bs <= 3) return false;
-            else {
-              if (ch <= 48) return false;
-              else return true;
-            }
-          }
-          else {
-            if (bs <= 48) return true;
-            else {
-              if (w <= 10) return true;
-              else {
-                if (ch <= 48) return false;
-                else return true;
-              }
-            }
-          }
-        }
-        else {
-          if (bs <= 1) {
-            if (w <= 44) {
-              if (w <= 30) return false;
-              else return true;
-            }
-            else return false;
-          }
-          else {
-            if (bs <= 48) {
-              if (bs <= 24) return false;
-              else {
-                if (w <= 120) return false;
-                else {
-                  if (ch <= 48) return false;
-                  else return true;
-                }
-              }
-            }
-            else {
-              if (ch <= 48) return false;
-              else {
-                if (w <= 44) return false;
-                else {
-                  if (w <= 88) return true;
-                  else return false;
-                }
-              }
-            }
+            return false;
           }
         }
       }
@@ -291,198 +76,39 @@ static bool check_cudnn_depthwise_workload_sm80(
       if (filter <= 4) {
         if (ch <= 192) {
           if (filter <= 2) {
-            if (bs <= 3) return true;
-            else {
-              if (w <= 21) return true;
-              else {
-                if (w <= 60) {
-                  if (bs <= 6) return true;
-                  else {
-                    if (bs <= 48) {
-                      if (bs <= 12) {
-                        if (w <= 44) {
-                          if (w <= 30) return false;
-                          else return true;
-                        }
-                        else return false;
-                      }
-                      else {
-                        if (w <= 30) {
-                          if (bs <= 24) return true;
-                          else return false;
-                        }
-                        else return false;
-                      }
-                    }
-                    else {
-                      if (w <= 44) return false;
-                      else return true;
-                    }
-                  }
-                }
-                else {
-                  if (bs <= 24) {
-                    if (w <= 120) {
-                      if (bs <= 12) {
-                        if (w <= 88) {
-                          if (bs <= 6) return true;
-                          else return false;
-                        }
-                        else return false;
-                      }
-                      else {
-                        if (w <= 88) return false;
-                        else return true;
-                      }
-                    }
-                    else {
-                      if (bs <= 6) return false;
-                      else return true;
-                    }
-                  }
-                  else return true;
-                }
-              }
+            if (out_elements <= 925696) {
+              return true;
             }
+            else return false;
           }
           else return true;
         }
         else {
           if (ch <= 384) {
-            if (filter <= 2) {
-              if (bs <= 6) return true;
-              else {
-                if (w <= 44) return true;
-                else {
-                  if (bs <= 48) {
-                    if (w <= 60) {
-                      if (bs <= 12) return true;
-                      else return false;
-                    }
-                    else {
-                      if (bs <= 24) {
-                        if (w <= 120) {
-                          if (w <= 88) {
-                            if (bs <= 12) return true;
-                            else return false;
-                          }
-                          else {
-                            if (bs <= 12) return false;
-                            else return true;
-                          }
-                        }
-                        else return true;
-                      }
-                      else return true;
-                    }
-                  }
-                  else {
-                    if (w <= 120) return true;
-                    else return false;
-                  }
-                }
-              }
-            }
+            if (out_elements <= 2654208) return true;
             else {
               return true;
             }
           }
-          else {
-            return true;
-          }
+          else return true;
         }
       }
       else {
         if (bs <= 3) {
           if (w <= 21) return true;
           else {
-            if (ch <= 768) {
-              if (ch <= 384) return false;
-              else {
-                if (w <= 88) return false;
-                else {
-                  if (bs <= 1) {
-                    if (w <= 120) return false;
-                    else return true;
-                  }
-                  else return true;
-                }
-              }
-            }
-            else {
-              if (w <= 88) {
-                if (bs <= 1) return false;
-                else {
-                  if (w <= 44) return false;
-                  else return true;
-                }
-              }
-              else return true;
-            }
+            return false;
           }
         }
         else {
           if (ch <= 192) {
-            if (w <= 21) return true;
-            else {
-              if (bs <= 24) {
-                if (w <= 88) {
-                  if (bs <= 12) {
-                    if (w <= 44) {
-                      if (w <= 30) return false;
-                      else {
-                        if (bs <= 6) return true;
-                        else return false;
-                      }
-                    }
-                    else return false;
-                  }
-                  else {
-                    if (w <= 44) return false;
-                    else return true;
-                  }
-                }
-                else {
-                  if (bs <= 6) {
-                    if (w <= 120) return false;
-                    else return true;
-                  }
-                  else return true;
-                }
-              }
-              else return true;
-            }
+            return true;
           }
           else {
-            if (bs <= 6) {
-              if (w <= 21) return true;
-              else {
-                if (w <= 30) {
-                  if (ch <= 768) return false;
-                  else return true;
-                }
-                else {
-                  if (ch <= 384) {
-                    if (w <= 60) {
-                      if (w <= 44) return true;
-                      else return false;
-                    }
-                    else return true;
-                  }
-                  else return true;
-                }
-              }
-            }
+            if (bs <= 6) return true;
             else {
               if (ch <= 384) {
-                if (bs <= 12) {
-                  if (w <= 21) return true;
-                  else {
-                    if (w <= 30) return false;
-                    else return true;
-                  }
-                }
-                else return true;
+                return true;
               }
               else return true;
             }
@@ -496,730 +122,140 @@ static bool check_cudnn_depthwise_workload_sm80(
 
 template <typename T>
 static bool check_cudnn_depthwise_workload_sm90(
-    T stride, T filter, T w, T ch, T bs) {
+    T stride, T filter, T w, T ch, T bs, T h, T out_h, T out_w,
+    T out_elements, T kernel_work) {
   // auto-generated heuristic decision tree for cuDNN SM group 90, tolerance = 0.0
   if (stride <= 1) {
-    if (w <= 10) {
-      if (filter <= 2) {
-        if (ch <= 384) {
-          if (bs <= 6) return true;
-          else {
-            if (ch <= 48) {
-              if (bs <= 12) return true;
-              else return false;
-            }
-            else {
-              if (ch <= 192) return false;
-              else {
-                if (bs <= 24) {
-                  if (bs <= 12) return false;
-                  else return true;
-                }
-                else return false;
-              }
-            }
-          }
-        }
-        else {
-          if (ch <= 768) {
-            if (bs <= 48) {
-              if (bs <= 12) return true;
-              else return false;
+    if (kernel_work <= 557056) {
+      if (bs <= 12) {
+        if (bs <= 6) {
+          if (ch <= 384) {
+            if (kernel_work <= 357504) {
+              return true;
             }
             else return true;
-          }
-          else return true;
-        }
-      }
-      else {
-        if (ch <= 48) {
-          if (filter <= 4) {
-            if (bs <= 24) return true;
-            else return false;
           }
           else return true;
         }
         else return true;
       }
+      else return false;
     }
     else {
-      if (ch <= 48) {
-        if (w <= 30) {
-          if (filter <= 2) {
-            if (bs <= 6) return true;
-            else {
-              if (bs <= 24) return false;
-              else {
-                if (w <= 21) {
-                  if (bs <= 48) return true;
-                  else return false;
-                }
-                else return true;
-              }
-            }
-          }
-          else {
-            if (bs <= 3) {
-              if (filter <= 4) {
-                if (w <= 21) return true;
-                else {
-                  if (bs <= 1) return true;
-                  else return false;
-                }
-              }
-              else {
-                if (bs <= 1) {
-                  if (w <= 21) return true;
-                  else return false;
-                }
-                else return true;
-              }
-            }
-            else {
-              if (w <= 21) {
-                if (filter <= 4) {
-                  if (bs <= 24) {
-                    if (bs <= 12) return true;
-                    else return false;
-                  }
-                  else return true;
-                }
-                else return true;
-              }
-              else return true;
-            }
-          }
-        }
-        else {
-          if (w <= 44) {
-            if (filter <= 2) {
-              if (bs <= 24) {
-                if (bs <= 6) return true;
-                else return false;
-              }
-              else return true;
-            }
-            else return true;
-          }
-          else {
-            if (bs <= 1) {
-              if (filter <= 4) return true;
-              else {
-                if (w <= 88) {
-                  if (w <= 60) return true;
-                  else return false;
-                }
-                else return true;
-              }
-            }
-            else return true;
-          }
-        }
+      if (kernel_work <= 975872) {
+        return true;
       }
       else {
-        if (w <= 30) {
-          if (bs <= 1) {
-            if (ch <= 96) {
-              if (w <= 21) return true;
-              else {
-                if (filter <= 2) return true;
-                else {
-                  if (filter <= 4) return false;
-                  else return true;
-                }
-              }
-            }
-            else {
-              if (filter <= 2) {
-                if (w <= 21) {
-                  if (ch <= 384) return true;
-                  else {
-                    if (ch <= 768) return false;
-                    else return true;
-                  }
-                }
-                else return true;
-              }
-              else return true;
-            }
-          }
-          else {
-            if (ch <= 96) {
-              if (filter <= 2) {
-                if (bs <= 12) {
-                  if (bs <= 6) return true;
-                  else return false;
-                }
-                else return true;
-              }
-              else return true;
-            }
-            else return true;
-          }
+        if (out_elements <= 165888) {
+          return true;
         }
-        else {
-          if (ch <= 96) {
-            if (w <= 44) {
-              if (filter <= 2) {
-                if (bs <= 12) {
-                  if (bs <= 6) return true;
-                  else return false;
-                }
-                else return true;
-              }
-              else return true;
-            }
-            else return true;
-          }
-          else return true;
-        }
+        else return true;
       }
     }
   }
   else {
     if (ch <= 96) {
-      if (w <= 88) {
+      if (out_elements <= 3702784) {
         if (w <= 21) {
-          if (filter <= 2) {
-            if (bs <= 1) return true;
-            else {
-              if (w <= 10) {
-                if (bs <= 24) {
-                  if (ch <= 48) {
-                    if (bs <= 3) return true;
-                    else {
-                      if (bs <= 6) return false;
-                      else return true;
-                    }
-                  }
-                  else {
-                    if (bs <= 6) return false;
-                    else {
-                      if (bs <= 12) return true;
-                      else return false;
-                    }
-                  }
-                }
-                else return false;
-              }
-              else return false;
-            }
-          }
-          else {
+          if (kernel_work <= 430592) {
             if (filter <= 4) {
-              if (ch <= 48) {
-                if (bs <= 48) {
-                  if (bs <= 24) {
-                    if (bs <= 1) {
-                      if (w <= 10) return false;
-                      else return true;
-                    }
-                    else return true;
-                  }
-                  else {
-                    if (w <= 10) return true;
-                    else return false;
-                  }
-                }
-                else {
-                  if (w <= 10) return true;
-                  else return false;
-                }
-              }
+              if (filter <= 2) return false;
               else return true;
-            }
-            else {
-              if (ch <= 48) {
-                if (bs <= 12) return false;
-                else {
-                  if (bs <= 24) {
-                    if (w <= 10) return false;
-                    else return true;
-                  }
-                  else {
-                    if (w <= 10) {
-                      if (bs <= 48) return false;
-                      else return true;
-                    }
-                    else return false;
-                  }
-                }
-              }
-              else {
-                if (bs <= 3) return false;
-                else {
-                  if (bs <= 12) {
-                    if (w <= 10) return false;
-                    else return true;
-                  }
-                  else {
-                    if (bs <= 48) {
-                      if (bs <= 24) {
-                        if (w <= 10) return false;
-                        else return true;
-                      }
-                      else {
-                        if (w <= 10) return true;
-                        else return false;
-                      }
-                    }
-                    else return true;
-                  }
-                }
-              }
-            }
-          }
-        }
-        else {
-          if (ch <= 48) {
-            if (bs <= 1) {
-              if (filter <= 4) {
-                if (w <= 44) {
-                  if (filter <= 2) return false;
-                  else {
-                    if (w <= 30) return false;
-                    else return true;
-                  }
-                }
-                else return false;
-              }
-              else return false;
             }
             else return false;
           }
-          else {
-            if (filter <= 2) {
-              if (bs <= 1) {
-                if (w <= 44) return true;
-                else return false;
-              }
-              else return false;
-            }
-            else {
-              if (bs <= 48) {
-                if (filter <= 4) {
-                  if (w <= 44) {
-                    if (bs <= 3) {
-                      if (bs <= 1) {
-                        if (w <= 30) return false;
-                        else return true;
-                      }
-                      else return false;
-                    }
-                    else {
-                      if (w <= 30) {
-                        if (bs <= 6) return true;
-                        else return false;
-                      }
-                      else return true;
-                    }
-                  }
-                  else {
-                    if (bs <= 1) {
-                      if (w <= 60) return true;
-                      else return false;
-                    }
-                    else {
-                      if (w <= 60) return false;
-                      else {
-                        if (bs <= 24) {
-                          if (bs <= 3) return false;
-                          else return true;
-                        }
-                        else return false;
-                      }
-                    }
-                  }
-                }
-                else {
-                  if (bs <= 24) return false;
-                  else {
-                    if (w <= 60) return false;
-                    else return true;
-                  }
-                }
-              }
-              else {
-                if (w <= 60) {
-                  if (filter <= 4) {
-                    if (w <= 44) {
-                      if (w <= 30) return false;
-                      else return true;
-                    }
-                    else return false;
-                  }
-                  else return false;
-                }
-                else {
-                  if (filter <= 4) return false;
-                  else return true;
-                }
-              }
-            }
-          }
-        }
-      }
-      else {
-        if (bs <= 12) {
-          if (bs <= 6) {
-            if (ch <= 48) return false;
-            else {
-              if (filter <= 4) {
-                if (filter <= 2) return false;
-                else {
-                  if (bs <= 1) return true;
-                  else {
-                    if (bs <= 3) return false;
-                    else {
-                      if (w <= 120) return true;
-                      else return false;
-                    }
-                  }
-                }
-              }
-              else return false;
-            }
-          }
-          else {
-            if (ch <= 48) {
-              if (filter <= 4) {
-                if (filter <= 2) return false;
-                else {
-                  if (w <= 120) return false;
-                  else return true;
-                }
-              }
-              else return false;
-            }
-            else {
-              if (filter <= 2) return false;
-              else {
-                if (filter <= 4) return true;
-                else {
-                  if (w <= 120) return false;
-                  else return true;
-                }
-              }
-            }
-          }
+          else return true;
         }
         else {
-          if (filter <= 4) {
-            if (filter <= 2) {
-              if (bs <= 24) return false;
+          if (out_elements <= 1851392) {
+            if (h <= 88) {
+              if (ch <= 48) {
+                return false;
+              }
               else {
-                if (ch <= 48) return true;
-                else return false;
+                if (filter <= 2) return false;
+                else {
+                  return false;
+                }
               }
             }
             else {
-              return true;
+              if (filter <= 4) {
+                return false;
+              }
+              else return false;
             }
           }
-          else {
-            if (ch <= 48) return false;
-            else {
-              return true;
-            }
-          }
+          else return false;
         }
       }
+      else return true;
     }
     else {
       if (filter <= 2) {
         if (ch <= 768) {
-          if (bs <= 1) {
-            if (ch <= 192) {
-              if (w <= 60) {
-                if (w <= 21) return true;
-                else {
-                  if (w <= 30) return false;
-                  else return true;
-                }
-              }
-              else {
-                if (w <= 120) return false;
-                else return true;
-              }
-            }
-            else return true;
-          }
+          if (bs <= 1) return true;
           else {
-            if (w <= 10) {
-              if (ch <= 384) {
-                if (bs <= 6) return true;
-                else {
-                  if (bs <= 12) {
-                    if (ch <= 192) return true;
-                    else return false;
-                  }
-                  else {
-                    if (bs <= 24) return true;
-                    else {
-                      if (bs <= 48) {
-                        if (ch <= 192) return true;
-                        else return false;
-                      }
-                      else {
-                        if (ch <= 192) return false;
-                        else return true;
-                      }
-                    }
-                  }
-                }
-              }
-              else return true;
-            }
+            if (out_w <= 5) return true;
             else {
-              if (w <= 21) {
-                if (ch <= 384) return false;
-                else return true;
-              }
+              if (h <= 21) return false;
               else {
-                if (bs <= 3) {
-                  if (ch <= 384) return false;
-                  else {
-                    if (w <= 88) return true;
-                    else return false;
-                  }
-                }
+                if (bs <= 3) return false;
                 else {
-                  if (ch <= 384) return false;
-                  else {
-                    if (w <= 30) {
-                      if (bs <= 12) return true;
-                      else return false;
-                    }
-                    else {
-                      if (w <= 44) {
-                        if (bs <= 12) return true;
-                        else return false;
-                      }
-                      else {
-                        return false;
-                      }
-                    }
+                  if (ch <= 384) {
+                    return false;
                   }
+                  else return false;
                 }
               }
             }
           }
         }
         else {
-          if (w <= 88) {
-            if (w <= 30) return true;
-            else {
-              if (bs <= 12) {
-                if (bs <= 6) {
-                  if (bs <= 3) return true;
-                  else {
-                    if (w <= 44) return true;
-                    else {
-                      if (w <= 60) return false;
-                      else return true;
-                    }
-                  }
-                }
-                else {
-                  if (w <= 44) return true;
-                  else return false;
-                }
-              }
-              else {
-                if (w <= 44) return false;
-                else {
-                  if (w <= 60) return true;
-                  else return false;
-                }
-              }
-            }
+          if (kernel_work <= 7405568) {
+            return true;
           }
-          else {
-            if (bs <= 3) return true;
-            else return false;
-          }
+          else return false;
         }
       }
       else {
         if (bs <= 3) {
           if (filter <= 4) {
-            if (ch <= 192) {
-              if (w <= 21) return true;
-              else {
-                if (w <= 60) {
-                  if (w <= 44) {
-                    if (w <= 30) {
-                      if (bs <= 1) return true;
-                      else return false;
-                    }
-                    else return true;
-                  }
-                  else return false;
-                }
-                else return true;
-              }
+            if (ch <= 192) return true;
+            else {
+              return true;
             }
-            else return true;
           }
           else {
-            if (w <= 21) {
-              if (ch <= 192) {
-                if (bs <= 1) return true;
-                else return false;
-              }
-              else {
-                if (ch <= 384) {
-                  if (bs <= 1) return false;
-                  else return true;
-                }
-                else return true;
-              }
-            }
+            if (out_h <= 10) return true;
             else {
-              if (ch <= 384) {
-                if (w <= 44) {
-                  if (w <= 30) return false;
-                  else {
-                    if (bs <= 1) return true;
-                    else return false;
-                  }
-                }
-                else {
-                  if (w <= 120) return false;
-                  else {
-                    if (ch <= 192) return false;
-                    else {
-                      if (bs <= 1) return false;
-                      else return true;
-                    }
-                  }
-                }
+              if (out_elements <= 925696) {
+                return false;
               }
-              else {
-                if (w <= 88) {
-                  if (bs <= 1) return false;
-                  else {
-                    if (ch <= 768) return false;
-                    else {
-                      if (w <= 44) return false;
-                      else return true;
-                    }
-                  }
-                }
-                else {
-                  if (bs <= 1) {
-                    if (ch <= 768) {
-                      if (w <= 120) return false;
-                      else return true;
-                    }
-                    else return true;
-                  }
-                  else return true;
-                }
-              }
+              else return true;
             }
           }
         }
         else {
           if (ch <= 192) {
             if (filter <= 4) {
-              if (bs <= 6) {
-                if (w <= 30) {
-                  if (w <= 21) return true;
-                  else return false;
-                }
-                else return true;
-              }
-              else return true;
+              return true;
             }
             else {
-              if (bs <= 6) {
-                if (w <= 21) {
-                  if (w <= 10) return false;
-                  else return true;
-                }
-                else {
-                  if (w <= 120) return false;
-                  else return true;
-                }
-              }
-              else {
-                if (bs <= 24) {
-                  if (w <= 88) {
-                    if (w <= 21) return true;
-                    else {
-                      if (w <= 60) {
-                        if (w <= 44) return false;
-                        else {
-                          if (bs <= 12) return false;
-                          else return true;
-                        }
-                      }
-                      else {
-                        if (bs <= 12) return false;
-                        else return true;
-                      }
-                    }
-                  }
-                  else return true;
-                }
-                else {
-                  if (w <= 44) {
-                    if (w <= 21) return true;
-                    else {
-                      if (bs <= 48) return false;
-                      else return true;
-                    }
-                  }
-                  else return true;
-                }
-              }
+              return true;
             }
           }
           else {
             if (bs <= 6) {
-              if (filter <= 4) return true;
-              else {
-                if (ch <= 384) {
-                  if (w <= 21) return true;
-                  else {
-                    if (w <= 88) {
-                      if (w <= 44) {
-                        if (w <= 30) return false;
-                        else return true;
-                      }
-                      else return false;
-                    }
-                    else return true;
-                  }
-                }
-                else {
-                  if (ch <= 768) {
-                    if (w <= 30) {
-                      if (w <= 21) return true;
-                      else return false;
-                    }
-                    else return true;
-                  }
-                  else return true;
-                }
-              }
+              return true;
             }
             else {
-              if (ch <= 384) {
-                if (bs <= 12) {
-                  if (filter <= 4) return true;
-                  else {
-                    if (w <= 21) return true;
-                    else {
-                      if (w <= 30) return false;
-                      else return true;
-                    }
-                  }
-                }
-                else return true;
+              if (out_elements <= 462848) {
+                return true;
               }
-              else return true;
+              else {
+                return true;
+              }
             }
           }
         }
@@ -1231,437 +267,93 @@ static bool check_cudnn_depthwise_workload_sm90(
 
 template <typename T>
 static bool check_cudnn_depthwise_workload_sm100(
-    T stride, T filter, T w, T ch, T bs) {
+    T stride, T filter, T w, T ch, T bs, T h, T out_h, T out_w,
+    T out_elements, T kernel_work) {
   // auto-generated heuristic decision tree for cuDNN SM group 100, tolerance = 0.0
   if (stride <= 1) {
-    if (w <= 21) {
-      if (ch <= 96) {
-        if (filter <= 4) {
-          if (bs <= 24) {
-            if (filter <= 2) {
-              if (bs <= 12) {
-                if (w <= 10) {
-                  if (ch <= 48) {
-                    if (bs <= 6) {
-                      if (bs <= 3) {
-                        if (bs <= 1) return false;
-                        else return true;
-                      }
-                      else return false;
-                    }
-                    else return true;
-                  }
-                  else {
-                    if (bs <= 6) {
-                      if (bs <= 1) return true;
-                      else {
-                        return true;
-                      }
-                    }
-                    else return true;
-                  }
-                }
-                else {
-                  if (bs <= 1) {
-                    return true;
-                  }
-                  else {
-                    if (bs <= 6) {
-                      if (ch <= 48) return true;
-                      else {
-                        if (bs <= 3) return false;
-                        else return true;
-                      }
-                    }
-                    else {
-                      return false;
-                    }
-                  }
-                }
-              }
+    if (kernel_work <= 115248) {
+      if (out_h <= 17) {
+        if (out_elements <= 3920) return true;
+        else {
+          if (filter <= 2) {
+            if (bs <= 6) {
+              if (bs <= 1) return true;
               else {
-                if (w <= 10) return false;
+                if (bs <= 3) return false;
                 else return true;
               }
             }
             else {
-              if (bs <= 3) return false;
-              else {
-                if (w <= 10) {
-                  if (ch <= 48) return false;
-                  else {
-                    if (bs <= 6) return false;
-                    else {
-                      if (bs <= 12) return true;
-                      else return false;
-                    }
-                  }
-                }
-                else {
-                  if (bs <= 6) {
-                    if (ch <= 48) return true;
-                    else return false;
-                  }
-                  else {
-                    if (ch <= 48) return false;
-                    else {
-                      if (bs <= 12) return false;
-                      else return true;
-                    }
-                  }
-                }
-              }
+              return false;
             }
           }
-          else {
-            if (ch <= 48) {
-              if (filter <= 2) return true;
-              else {
-                if (bs <= 48) return false;
-                else {
-                  if (w <= 10) return true;
-                  else return false;
-                }
-              }
-            }
-            else {
-              if (bs <= 48) {
-                if (filter <= 2) {
-                  if (w <= 10) return true;
-                  else return false;
-                }
-                else {
-                  return true;
-                }
-              }
-              else return true;
-            }
-          }
-        }
-        else {
-          if (bs <= 12) {
-            if (bs <= 6) {
-              if (bs <= 1) {
-                if (w <= 10) return true;
-                else {
-                  return true;
-                }
-              }
-              else return true;
-            }
-            else {
-              if (ch <= 48) {
-                return true;
-              }
-              else {
-                return true;
-              }
-            }
-          }
-          else return true;
+          else return false;
         }
       }
       else {
-        if (bs <= 3) {
-          if (filter <= 4) {
-            if (ch <= 192) {
-              if (w <= 10) {
-                if (filter <= 2) {
-                  return false;
-                }
-                else return false;
-              }
-              else {
-                if (filter <= 2) return true;
-                else {
-                  return true;
-                }
-              }
-            }
-            else {
-              if (ch <= 768) {
-                if (filter <= 2) {
-                  if (w <= 10) {
-                    if (ch <= 384) {
-                      return true;
-                    }
-                    else {
-                      return false;
-                    }
-                  }
-                  else {
-                    if (ch <= 384) {
-                      if (bs <= 1) return true;
-                      else return false;
-                    }
-                    else return true;
-                  }
-                }
-                else {
-                  if (w <= 10) {
-                    if (bs <= 1) {
-                      return true;
-                    }
-                    else {
-                      if (ch <= 384) return true;
-                      else return false;
-                    }
-                  }
-                  else {
-                    if (bs <= 1) {
-                      if (ch <= 384) return true;
-                      else return false;
-                    }
-                    else {
-                      if (ch <= 384) return false;
-                      else return true;
-                    }
-                  }
-                }
-              }
-              else return true;
-            }
-          }
-          else {
-            if (ch <= 192) {
-              if (bs <= 1) return true;
-              else {
-                return true;
-              }
-            }
-            else return true;
-          }
-        }
-        else {
-          if (ch <= 192) {
-            if (filter <= 2) {
-              if (w <= 10) {
-                if (bs <= 24) {
-                  if (bs <= 12) {
-                    if (bs <= 6) return true;
-                    else return false;
-                  }
-                  else return false;
-                }
-                else {
-                  return true;
-                }
-              }
-              else {
-                if (bs <= 24) {
-                  if (bs <= 12) return true;
-                  else return false;
-                }
-                else return true;
-              }
-            }
-            else {
-              if (bs <= 24) {
-                if (filter <= 4) {
-                  if (w <= 10) {
-                    if (bs <= 6) return true;
-                    else {
-                      return false;
-                    }
-                  }
-                  else return true;
-                }
-                else {
-                  if (bs <= 6) {
-                    return true;
-                  }
-                  else return true;
-                }
-              }
-              else return true;
-            }
-          }
-          else {
-            if (ch <= 384) {
-              if (bs <= 12) {
-                if (filter <= 2) {
-                  if (w <= 10) {
-                    if (bs <= 6) return true;
-                    else return false;
-                  }
-                  else return true;
-                }
-                else {
-                  if (filter <= 4) {
-                    if (w <= 10) {
-                      return true;
-                    }
-                    else return true;
-                  }
-                  else return true;
-                }
-              }
-              else return true;
-            }
-            else {
-              if (bs <= 6) {
-                if (filter <= 2) {
-                  if (ch <= 768) {
-                    if (w <= 10) return false;
-                    else return true;
-                  }
-                  else return true;
-                }
-                else return true;
-              }
-              else return true;
-            }
-          }
-        }
+        return true;
       }
     }
     else {
-      if (ch <= 48) {
-        if (w <= 30) {
-          if (bs <= 24) {
-            if (filter <= 4) {
-              if (filter <= 2) {
-                if (bs <= 12) return true;
-                else return false;
-              }
-              else {
-                if (bs <= 1) return true;
-                else {
-                  if (bs <= 12) {
-                    return false;
-                  }
-                  else return false;
-                }
-              }
-            }
-            else {
-              if (bs <= 6) {
-                if (bs <= 1) return true;
-                else {
-                  return false;
-                }
-              }
-              else return true;
-            }
+      if (out_elements <= 112128) {
+        if (filter <= 4) {
+          if (ch <= 80) {
+            if (out_h <= 17) return false;
+            else return true;
           }
-          else return true;
+          else {
+            return true;
+          }
         }
         else {
-          if (w <= 44) {
-            if (bs <= 12) {
-              if (filter <= 2) return true;
+          if (w <= 24) {
+            if (out_elements <= 15680) return true;
+            else {
+              if (out_h <= 12) {
+                return true;
+              }
               else {
-                if (filter <= 4) {
-                  if (bs <= 6) {
-                    return false;
-                  }
-                  else return false;
-                }
-                else {
-                  if (bs <= 6) {
-                    return true;
-                  }
-                  else return true;
-                }
+                return true;
               }
             }
-            else return true;
           }
           else return true;
         }
       }
       else {
-        if (w <= 30) {
-          if (ch <= 96) {
-            if (bs <= 3) {
-              if (bs <= 1) return true;
-              else {
-                if (filter <= 2) return true;
-                else {
-                  return false;
-                }
-              }
+        if (out_elements <= 454144) {
+          if (ch <= 48) {
+            if (w <= 29) {
+              return true;
             }
             else {
-              if (bs <= 6) {
-                if (filter <= 2) return true;
-                else {
-                  if (filter <= 4) return false;
-                  else return true;
-                }
-              }
-              else {
-                if (bs <= 24) {
-                  if (filter <= 4) {
-                    if (bs <= 12) {
-                      return true;
-                    }
-                    else {
-                      return true;
-                    }
-                  }
-                  else return true;
-                }
-                else return true;
-              }
+              return true;
             }
           }
           else {
-            if (bs <= 1) {
-              if (ch <= 384) {
-                if (filter <= 4) {
-                  if (filter <= 2) return true;
-                  else {
-                    return true;
-                  }
-                }
-                else return true;
-              }
-              else return true;
-            }
-            else {
-              if (bs <= 3) {
-                if (ch <= 192) {
-                  if (filter <= 4) {
+            if (kernel_work <= 2534400) {
+              if (kernel_work <= 397312) return true;
+              else {
+                if (ch <= 320) {
+                  if (bs <= 12) {
                     return true;
                   }
                   else return true;
                 }
                 else return true;
               }
-              else return true;
+            }
+            else {
+              return true;
             }
           }
         }
         else {
-          if (w <= 44) {
-            if (bs <= 1) {
-              if (ch <= 384) {
-                if (filter <= 2) return true;
-                else {
-                  if (filter <= 4) {
-                    if (ch <= 192) return true;
-                    else return false;
-                  }
-                  else {
-                    return true;
-                  }
-                }
-              }
-              else return true;
+          if (out_elements <= 897024) {
+            if (ch <= 80) {
+              return true;
             }
-            else {
-              if (ch <= 96) {
-                if (bs <= 3) {
-                  if (filter <= 2) return true;
-                  else {
-                    return true;
-                  }
-                }
-                else return true;
-              }
-              else return true;
-            }
+            else return true;
           }
           else return true;
         }
@@ -1670,734 +362,233 @@ static bool check_cudnn_depthwise_workload_sm100(
   }
   else {
     if (ch <= 192) {
-      if (w <= 88) {
-        if (ch <= 96) {
-          if (bs <= 1) {
-            if (filter <= 2) {
-              if (w <= 10) {
+      if (out_elements <= 3059712) {
+        if (bs <= 1) {
+          if (filter <= 4) {
+            if (h <= 17) {
+              if (filter <= 2) return true;
+              else return false;
+            }
+            else {
+              if (out_elements <= 28032) {
                 return true;
               }
+              else return true;
+            }
+          }
+          else {
+            if (out_elements <= 41472) {
+              return false;
+            }
+            else return false;
+          }
+        }
+        else {
+          if (w <= 8) {
+            if (out_elements <= 14336) {
+              if (kernel_work <= 8704) return true;
               else {
-                if (w <= 30) {
-                  if (ch <= 48) {
-                    return true;
-                  }
-                  else {
-                    return true;
-                  }
-                }
-                else return true;
+                return false;
               }
             }
             else {
-              if (w <= 30) {
-                if (ch <= 48) {
-                  if (w <= 21) return false;
+              if (ch <= 80) {
+                if (out_elements <= 24576) return true;
+                else return false;
+              }
+              else {
+                return true;
+              }
+            }
+          }
+          else {
+            if (out_elements <= 1851392) {
+              if (ch <= 112) {
+                if (ch <= 80) {
+                  if (out_elements <= 897024) {
+                    if (h <= 17) {
+                      if (bs <= 24) {
+                        if (out_elements <= 19584) {
+                          return false;
+                        }
+                        else return false;
+                      }
+                      else return false;
+                    }
+                    else {
+                      if (bs <= 6) {
+                        if (ch <= 48) return false;
+                        else {
+                          if (filter <= 4) {
+                            return false;
+                          }
+                          else return false;
+                        }
+                      }
+                      else {
+                        if (out_elements <= 663552) return false;
+                        else {
+                          return false;
+                        }
+                      }
+                    }
+                  }
+                  else {
+                    if (kernel_work <= 19615744) {
+                      if (kernel_work <= 5263360) return false;
+                      else return true;
+                    }
+                    else return false;
+                  }
+                }
+                else {
+                  if (filter <= 2) return false;
                   else {
                     if (filter <= 4) return true;
                     else return false;
                   }
                 }
-                else {
-                  if (filter <= 4) {
-                    if (w <= 21) return false;
-                    else return true;
-                  }
-                  else {
-                    if (w <= 10) return false;
-                    else {
-                      if (w <= 21) return true;
-                      else return false;
-                    }
-                  }
-                }
               }
               else {
                 if (filter <= 4) {
-                  if (w <= 60) {
-                    if (w <= 44) return true;
+                  if (filter <= 2) {
+                    if (kernel_work <= 115712) return false;
                     else {
-                      if (ch <= 48) return false;
-                      else return true;
+                      return false;
                     }
                   }
-                  else return true;
-                }
-                else {
-                  if (ch <= 48) {
-                    if (w <= 60) return true;
-                    else return false;
-                  }
-                  else return false;
-                }
-              }
-            }
-          }
-          else {
-            if (w <= 10) {
-              if (bs <= 12) {
-                if (ch <= 48) {
-                  if (filter <= 2) {
-                    if (bs <= 6) {
+                  else {
+                    if (kernel_work <= 1041408) return false;
+                    else {
                       return true;
                     }
-                    else return false;
-                  }
-                  else return false;
-                }
-                else {
-                  if (filter <= 4) {
-                    if (filter <= 2) {
-                      return false;
-                    }
-                    else return false;
-                  }
-                  else {
-                    if (bs <= 6) {
-                      return false;
-                    }
-                    else return false;
-                  }
-                }
-              }
-              else {
-                if (bs <= 24) {
-                  if (ch <= 48) {
-                    if (filter <= 4) {
-                      if (filter <= 2) return true;
-                      else return false;
-                    }
-                    else return true;
-                  }
-                  else {
-                    return true;
                   }
                 }
                 else {
-                  if (ch <= 48) {
-                    if (bs <= 48) {
-                      if (filter <= 2) return true;
-                      else {
-                        return false;
-                      }
-                    }
-                    else return false;
-                  }
-                  else {
-                    if (filter <= 4) {
-                      if (filter <= 2) return true;
-                      else return false;
-                    }
-                    else return true;
-                  }
-                }
-              }
-            }
-            else {
-              if (bs <= 48) {
-                if (w <= 21) {
-                  if (bs <= 24) {
-                    if (bs <= 6) {
-                      if (filter <= 2) {
-                        if (bs <= 3) {
-                          return true;
-                        }
-                        else {
-                          if (ch <= 48) return true;
-                          else return false;
-                        }
-                      }
-                      else {
-                        if (filter <= 4) return false;
-                        else {
-                          if (bs <= 3) {
-                            return false;
-                          }
-                          else return false;
-                        }
-                      }
-                    }
-                    else {
-                      if (filter <= 4) {
-                        if (ch <= 48) return false;
-                        else {
-                          if (bs <= 12) {
-                            if (filter <= 2) return false;
-                            else return true;
-                          }
-                          else {
-                            if (filter <= 2) return true;
-                            else return false;
-                          }
-                        }
-                      }
-                      else {
-                        if (bs <= 12) {
-                          if (ch <= 48) return false;
-                          else return true;
-                        }
-                        else {
-                          if (ch <= 48) return true;
-                          else return false;
-                        }
-                      }
-                    }
-                  }
-                  else return false;
-                }
-                else {
-                  if (bs <= 24) {
-                    if (w <= 30) {
-                      if (bs <= 6) {
-                        if (filter <= 2) {
-                          if (ch <= 48) return false;
-                          else {
-                            return false;
-                          }
-                        }
-                        else return false;
-                      }
-                      else return false;
-                    }
-                    else {
-                      if (w <= 44) {
-                        if (bs <= 6) {
-                          if (filter <= 2) return false;
-                          else {
-                            if (bs <= 3) return false;
-                            else {
-                              if (filter <= 4) {
-                                return false;
-                              }
-                              else return false;
-                            }
-                          }
-                        }
-                        else return false;
-                      }
-                      else return false;
-                    }
-                  }
-                  else {
-                    if (w <= 60) {
-                      if (w <= 44) return false;
-                      else {
-                        if (ch <= 48) return false;
-                        else {
-                          if (filter <= 4) {
-                            if (filter <= 2) return false;
-                            else return true;
-                          }
-                          else return false;
-                        }
-                      }
-                    }
-                    else {
-                      if (ch <= 48) return false;
-                      else {
-                        if (filter <= 4) {
-                          if (filter <= 2) return false;
-                          else return true;
-                        }
-                        else return false;
-                      }
-                    }
-                  }
-                }
-              }
-              else {
-                if (w <= 44) {
                   return false;
                 }
-                else {
-                  if (filter <= 4) {
-                    if (filter <= 2) {
-                      if (ch <= 48) {
-                        if (w <= 60) return false;
-                        else return true;
-                      }
-                      else return false;
-                    }
-                    else return true;
-                  }
-                  else return false;
-                }
-              }
-            }
-          }
-        }
-        else {
-          if (filter <= 2) {
-            if (bs <= 1) {
-              if (w <= 21) return false;
-              else return true;
-            }
-            else {
-              if (w <= 10) {
-                if (bs <= 48) return true;
-                else return false;
-              }
-              else {
-                if (bs <= 3) {
-                  if (w <= 30) {
-                    return true;
-                  }
-                  else {
-                    if (w <= 44) return false;
-                    else {
-                      return false;
-                    }
-                  }
-                }
-                else {
-                  if (bs <= 48) return false;
-                  else {
-                    if (w <= 44) return false;
-                    else {
-                      if (w <= 60) return true;
-                      else return false;
-                    }
-                  }
-                }
-              }
-            }
-          }
-          else {
-            if (filter <= 4) {
-              if (bs <= 3) {
-                if (w <= 30) {
-                  if (w <= 21) return false;
-                  else {
-                    if (bs <= 1) return true;
-                    else return false;
-                  }
-                }
-                else {
-                  if (bs <= 1) return true;
-                  else {
-                    if (w <= 44) return true;
-                    else {
-                      if (w <= 60) return false;
-                      else return true;
-                    }
-                  }
-                }
-              }
-              else {
-                if (bs <= 12) {
-                  if (w <= 30) {
-                    if (w <= 21) {
-                      if (bs <= 6) {
-                        if (w <= 10) return false;
-                        else return true;
-                      }
-                      else {
-                        if (w <= 10) return true;
-                        else return false;
-                      }
-                    }
-                    else return false;
-                  }
-                  else {
-                    return true;
-                  }
-                }
-                else {
-                  if (bs <= 24) {
-                    if (w <= 30) {
-                      return true;
-                    }
-                    else return true;
-                  }
-                  else return true;
-                }
               }
             }
             else {
-              if (w <= 10) {
-                if (bs <= 6) {
-                  if (bs <= 3) {
-                    if (bs <= 1) return true;
-                    else return false;
-                  }
-                  else return false;
-                }
+              if (filter <= 4) {
+                if (kernel_work <= 10924032) return false;
                 else return true;
               }
-              else {
-                if (bs <= 48) {
-                  if (w <= 21) {
-                    if (bs <= 3) {
-                      if (bs <= 1) return true;
-                      else return false;
-                    }
-                    else {
-                      if (bs <= 12) return true;
-                      else {
-                        return false;
-                      }
-                    }
-                  }
-                  else {
-                    return false;
-                  }
-                }
-                else {
-                  if (w <= 44) return false;
-                  else return true;
-                }
-              }
+              else return false;
             }
           }
         }
       }
       else {
-        if (bs <= 12) {
-          if (filter <= 4) {
-            if (bs <= 1) return true;
-            else {
-              if (ch <= 96) {
-                if (bs <= 6) return false;
-                else {
-                  if (filter <= 2) return false;
-                  else {
-                    if (ch <= 48) return false;
-                    else {
-                      return true;
-                    }
-                  }
-                }
-              }
-              else {
-                if (filter <= 2) return false;
-                else {
-                  if (bs <= 3) {
-                    if (w <= 120) return false;
-                    else return true;
-                  }
-                  else return true;
-                }
-              }
-            }
-          }
-          else {
-            return false;
-          }
-        }
+        if (kernel_work <= 5308416) return false;
         else {
-          if (bs <= 24) {
-            if (filter <= 4) {
-              if (filter <= 2) {
-                if (ch <= 96) return false;
-                else {
-                  if (w <= 120) return true;
-                  else return false;
-                }
-              }
-              else return true;
-            }
+          if (filter <= 4) {
+            if (kernel_work <= 9011200) return true;
             else {
-              if (ch <= 96) return false;
-              else {
-                if (w <= 120) return false;
-                else return true;
-              }
+              return true;
             }
           }
           else {
-            if (filter <= 4) return true;
+            if (kernel_work <= 132710400) return false;
             else {
-              if (ch <= 48) {
-                if (bs <= 48) {
-                  if (w <= 120) return false;
-                  else return true;
-                }
-                else return true;
-              }
-              else return true;
+              return true;
             }
           }
         }
       }
     }
     else {
-      if (filter <= 4) {
-        if (filter <= 2) {
-          if (ch <= 384) {
-            if (bs <= 1) return true;
+      if (kernel_work <= 55115776) {
+        if (w <= 24) {
+          if (filter <= 2) {
+            if (ch <= 448) {
+              if (out_elements <= 82944) return true;
+              else return false;
+            }
             else {
-              if (w <= 21) {
-                if (bs <= 12) {
-                  if (bs <= 6) {
-                    if (bs <= 3) {
-                      if (w <= 10) return true;
-                      else return false;
-                    }
-                    else {
-                      if (w <= 10) return false;
-                      else return true;
-                    }
-                  }
-                  else {
-                    if (w <= 10) return true;
-                    else return false;
-                  }
-                }
-                else {
-                  if (bs <= 24) return true;
-                  else {
-                    if (bs <= 48) {
-                      if (w <= 10) return true;
-                      else return false;
-                    }
-                    else return true;
-                  }
-                }
-              }
+              if (ch <= 768) return true;
               else {
-                if (w <= 88) {
-                  if (bs <= 48) {
-                    if (bs <= 6) {
-                      if (w <= 30) {
-                        if (bs <= 3) return false;
-                        else return true;
-                      }
-                      else {
-                        if (bs <= 3) {
-                          if (w <= 44) return false;
-                          else {
-                            return true;
-                          }
-                        }
-                        else return false;
-                      }
-                    }
-                    else return false;
-                  }
-                  else {
-                    if (w <= 44) return false;
-                    else return true;
-                  }
-                }
-                else {
-                  if (bs <= 12) {
-                    if (bs <= 3) return true;
-                    else return false;
-                  }
-                  else return true;
-                }
+                return true;
               }
             }
           }
           else {
-            if (ch <= 768) {
-              if (bs <= 3) return true;
-              else {
-                if (w <= 30) {
-                  if (bs <= 48) return true;
-                  else {
-                    if (w <= 21) return true;
-                    else return false;
-                  }
-                }
-                else {
-                  if (bs <= 12) {
-                    if (w <= 88) {
-                      if (w <= 44) {
-                        if (bs <= 6) return false;
-                        else return true;
-                      }
-                      else return true;
-                    }
-                    else return false;
-                  }
-                  else {
-                    if (w <= 44) {
-                      if (bs <= 48) return true;
-                      else return false;
-                    }
-                    else {
-                      if (w <= 88) {
-                        if (bs <= 48) return false;
-                        else {
-                          if (w <= 60) return true;
-                          else return false;
-                        }
-                      }
-                      else {
-                        if (w <= 120) {
-                          if (bs <= 24) return false;
-                          else return true;
-                        }
-                        else {
-                          if (bs <= 48) return false;
-                          else return true;
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-            else {
-              if (w <= 10) {
-                if (bs <= 3) {
-                  return true;
-                }
-                else return true;
+            if (kernel_work <= 460992) {
+              if (out_w <= 6) {
+                return true;
               }
               else return true;
+            }
+            else {
+              if (ch <= 320) {
+                return true;
+              }
+              else {
+                if (bs <= 3) return true;
+                else {
+                  return true;
+                }
+              }
             }
           }
         }
         else {
-          if (bs <= 3) {
-            if (ch <= 384) {
-              if (w <= 60) {
-                if (w <= 21) return true;
+          if (filter <= 4) {
+            if (filter <= 2) {
+              if (bs <= 3) {
+                if (kernel_work <= 165888) return true;
                 else {
-                  if (w <= 30) return false;
-                  else {
-                    if (w <= 44) return true;
-                    else {
-                      if (bs <= 1) return false;
-                      else return true;
-                    }
-                  }
+                  return true;
                 }
               }
-              else return true;
-            }
-            else {
-              if (w <= 21) {
+              else {
                 if (ch <= 768) {
-                  if (w <= 10) return true;
+                  if (out_elements <= 12713984) {
+                    if (ch <= 448) {
+                      return false;
+                    }
+                    else {
+                      if (kernel_work <= 5308416) return true;
+                      else return false;
+                    }
+                  }
                   else {
-                    if (bs <= 1) return true;
+                    if (ch <= 320) return true;
                     else return false;
                   }
                 }
-                else return true;
-              }
-              else return true;
-            }
-          }
-          else return true;
-        }
-      }
-      else {
-        if (bs <= 3) {
-          if (w <= 21) {
-            if (ch <= 384) {
-              if (w <= 10) return true;
-              else {
-                return true;
-              }
-            }
-            else {
-              if (ch <= 768) {
-                if (bs <= 1) return true;
                 else {
-                  return true;
-                }
-              }
-              else {
-                return true;
-              }
-            }
-          }
-          else {
-            if (w <= 88) {
-              return false;
-            }
-            else {
-              if (ch <= 768) return false;
-              else {
-                if (bs <= 1) return false;
-                else return true;
-              }
-            }
-          }
-        }
-        else {
-          if (ch <= 384) {
-            if (bs <= 24) {
-              if (w <= 21) {
-                if (w <= 10) return true;
-                else {
-                  if (bs <= 12) return true;
-                  else return false;
-                }
-              }
-              else {
-                if (w <= 88) {
-                  if (bs <= 12) {
-                    return false;
-                  }
+                  if (kernel_work <= 5308416) return true;
                   else {
-                    if (w <= 44) return false;
+                    if (out_elements <= 11829248) return false;
                     else return true;
                   }
-                }
-                else {
-                  if (bs <= 6) {
-                    if (w <= 120) return false;
-                    else return true;
-                  }
-                  else return true;
                 }
               }
             }
             else {
-              if (w <= 44) {
-                if (bs <= 48) {
-                  if (w <= 10) return true;
-                  else return false;
-                }
-                else return true;
-              }
-              else return true;
+              return true;
             }
           }
           else {
             if (bs <= 6) {
-              if (w <= 21) return true;
-              else {
-                if (w <= 44) return false;
-                else {
-                  if (w <= 88) {
-                    if (ch <= 768) return false;
-                    else return true;
-                  }
-                  else return true;
-                }
-              }
+              return false;
             }
             else {
-              if (bs <= 12) {
-                if (ch <= 768) {
-                  if (w <= 21) return true;
-                  else {
-                    if (w <= 44) return false;
-                    else return true;
-                  }
-                }
-                else return true;
-              }
-              else {
-                if (bs <= 24) {
-                  if (ch <= 768) {
-                    if (w <= 30) {
-                      return true;
-                    }
-                    else {
-                      return true;
-                    }
-                  }
-                  else return true;
-                }
-                else return true;
-              }
+              if (ch <= 448) return false;
+              else return true;
+            }
+          }
+        }
+      }
+      else {
+        if (bs <= 3) return true;
+        else {
+          if (filter <= 2) return true;
+          else {
+            if (out_elements <= 3633152) return true;
+            else {
+              return true;
             }
           }
         }
@@ -2415,7 +606,7 @@ static bool check_cudnn_depthwise_workload_with_filter(
   TORCH_INTERNAL_ASSERT(sm != 0, "CUDA not available");
 
   // 1D conv
-  if(at::symint::size<T>(input, 2) == 1 && stride == 1){
+  if (at::symint::size<T>(input, 2) == 1 && stride == 1) {
     return true;
   }
   // 2D conv
@@ -2429,26 +620,38 @@ static bool check_cudnn_depthwise_workload_with_filter(
   auto filter = at::symint::size<T>(weight, 3);
   // only 1/3/5 filter
   if (filter != 1 && filter != 3 && filter != 5) return false;
-  // we don't enforce square input but only check width to reduce heuristic space
-  if (at::symint::size<T>(input, 3) < 7) return false; // min width 7
+  auto h = at::symint::size<T>(input, 2);
   auto w = at::symint::size<T>(input, 3);
+  if (h < 7) return false;
+  if (w < 7) return false;
   auto ch = at::symint::size<T>(input, 1);
   auto bs = at::symint::size<T>(input, 0);
+  auto out_h = (h + 2 * (filter / 2) - filter) / stride + 1;
+  auto out_w = (w + 2 * (filter / 2) - filter) / stride + 1;
+  auto out_elements = bs * ch * out_h * out_w;
+  auto kernel_work = out_elements * filter * filter;
 
   if (sm < 80) return check_cudnn_depthwise_workload_sm80<T>(
-      stride, filter, w, ch, bs);
+      stride, filter, w, ch, bs, h, out_h, out_w,
+      out_elements, kernel_work);
   if (sm < 86) return check_cudnn_depthwise_workload_sm80<T>(
-      stride, filter, w, ch, bs);
+      stride, filter, w, ch, bs, h, out_h, out_w,
+      out_elements, kernel_work);
   if (sm < 89) return check_cudnn_depthwise_workload_sm90<T>(
-      stride, filter, w, ch, bs);
+      stride, filter, w, ch, bs, h, out_h, out_w,
+      out_elements, kernel_work);
   if (sm < 90) return check_cudnn_depthwise_workload_sm90<T>(
-      stride, filter, w, ch, bs);
+      stride, filter, w, ch, bs, h, out_h, out_w,
+      out_elements, kernel_work);
   if (sm < 100) return check_cudnn_depthwise_workload_sm90<T>(
-      stride, filter, w, ch, bs);
+      stride, filter, w, ch, bs, h, out_h, out_w,
+      out_elements, kernel_work);
   if (sm < 120) return check_cudnn_depthwise_workload_sm100<T>(
-      stride, filter, w, ch, bs);
+      stride, filter, w, ch, bs, h, out_h, out_w,
+      out_elements, kernel_work);
   return check_cudnn_depthwise_workload_sm100<T>(
-      stride, filter, w, ch, bs);
+      stride, filter, w, ch, bs, h, out_h, out_w,
+      out_elements, kernel_work);
 }
 
 

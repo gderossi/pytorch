@@ -13,7 +13,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 class TrainDecisionTreeDepthwiseConv:
     def __init__(self):
         self.sm_feature = "sm"
-        self.features = ["bs", "ch", "w", "filter", "stride"]
+        self.raw_features = ["bs", "ch", "h", "w", "filter", "stride"]
+        self.derived_features = ["out_h", "out_w", "out_elements", "kernel_work"]
+        self.features = [*self.raw_features, *self.derived_features]
         self.target = "cudnn_speedup_all"
         self.classes = ["false", "true"]
         self.sm_groups = [75, 80, 86, 89, 90, 100, 120]
@@ -87,6 +89,13 @@ class TrainDecisionTreeDepthwiseConv:
             default=[],
             help="Optional holdout CSV files used only for validation",
         )
+        self.parser.add_argument(
+            "--test-files",
+            type=str,
+            nargs="+",
+            default=[],
+            help="Optional final holdout CSV files used only for reporting",
+        )
 
     def parse_args(self):
         return self.parser.parse_args()
@@ -109,12 +118,36 @@ class TrainDecisionTreeDepthwiseConv:
     def nearest_generated_group(self, sm_group, generated_sm_groups):
         return min(generated_sm_groups, key=lambda group: abs(group - sm_group))
 
+    def add_derived_features(self, df):
+        df = df.copy()
+        if "h" not in df.columns:
+            df["h"] = df["w"]
+        else:
+            df["h"] = df["h"].fillna(df["w"])
+        df["out_h"] = (
+            (df["h"] + 2 * (df["filter"] // 2) - df["filter"]) // df["stride"]
+        ) + 1
+        df["out_w"] = (
+            (df["w"] + 2 * (df["filter"] // 2) - df["filter"]) // df["stride"]
+        ) + 1
+        df["out_elements"] = df["bs"] * df["ch"] * df["out_h"] * df["out_w"]
+        df["kernel_work"] = df["out_elements"] * df["filter"] * df["filter"]
+        return df
+
     def load_and_prepare_data(self, input_files, tolerance):
         """
         Load data and prepare for binary classification.
         Filters out label 2 (equal performance within tolerance).
         """
-        required_columns = [self.sm_feature, *self.features, self.target]
+        required_columns = [
+            self.sm_feature,
+            "bs",
+            "ch",
+            "w",
+            "filter",
+            "stride",
+            self.target,
+        ]
         dfs = []
 
         for input_file in input_files:
@@ -134,7 +167,8 @@ class TrainDecisionTreeDepthwiseConv:
                     f"Missing required columns in {input_file}: {sorted(missing_columns)}. "
                     f"Required columns: {required_columns}"
                 )
-            df = df_full[required_columns]
+            optional_columns = ["h"] if "h" in df_full.columns else []
+            df = df_full[[*required_columns, *optional_columns]]
 
             if df.isnull().any().any():
                 empty_cols = df.columns[df.isnull().any()].tolist()
@@ -144,7 +178,7 @@ class TrainDecisionTreeDepthwiseConv:
 
             dfs.append(df)
 
-        df = pd.concat(dfs, ignore_index=True)
+        df = self.add_derived_features(pd.concat(dfs, ignore_index=True))
 
         sm_values = df[self.sm_feature].values
         features = df[self.features].values
@@ -213,6 +247,7 @@ class TrainDecisionTreeDepthwiseConv:
 
     def evaluate_validation(
         self,
+        name,
         validation_files,
         tolerance,
         models,
@@ -223,7 +258,7 @@ class TrainDecisionTreeDepthwiseConv:
         )
         predictions = np.empty_like(labels)
 
-        print("Validation results:")
+        print(f"{name} results:")
         for sm_group in self.sm_groups:
             mask = sm_groups == sm_group
             if not mask.any():
@@ -251,6 +286,42 @@ class TrainDecisionTreeDepthwiseConv:
             f"  overall: accuracy={accuracy:.4f} ({accuracy * 100:.2f}%), "
             f"confusion_matrix=[[{matrix[0, 0]}, {matrix[0, 1]}], "
             f"[{matrix[1, 0]}, {matrix[1, 1]}]]"
+        )
+        self.report_policy_metrics(validation_files, tolerance, labels, predictions)
+
+    def report_policy_metrics(self, input_files, tolerance, labels, predictions):
+        dfs = []
+        for input_file in input_files:
+            dfs.append(pd.read_csv(input_file))
+        df = self.add_derived_features(pd.concat(dfs, ignore_index=True))
+
+        speedup_values = df[self.target].values
+        lower_tolerance = 1.0 - tolerance
+        upper_tolerance = 1.0 + tolerance
+        raw_labels = np.zeros(len(speedup_values), dtype=np.int64)
+        raw_labels[speedup_values < lower_tolerance] = 0
+        raw_labels[speedup_values > upper_tolerance] = 1
+        raw_labels[
+            (speedup_values >= lower_tolerance) & (speedup_values <= upper_tolerance)
+        ] = 2
+        df = df[raw_labels != 2]
+        if len(df) != len(predictions) or len(labels) != len(predictions):
+            raise RuntimeError("Policy metric rows do not match predictions")
+
+        native = df["time_all"].values
+        cudnn = df["time_all_cudnn"].values
+        chosen = np.where(predictions == 1, cudnn, native)
+        oracle = np.minimum(native, cudnn)
+        always_cudnn = cudnn
+        slowdown = chosen / oracle
+
+        print(
+            "  policy_metrics: "
+            f"heuristic_total_speedup={native.sum() / chosen.sum():.4f}, "
+            f"always_cudnn_total_speedup={native.sum() / always_cudnn.sum():.4f}, "
+            f"oracle_total_speedup={native.sum() / oracle.sum():.4f}, "
+            f"total_slowdown_vs_oracle={chosen.sum() / oracle.sum():.4f}, "
+            f"max_slowdown_vs_oracle={slowdown.max():.4f}"
         )
 
     def is_leaf_node(self, tree, node_id):
@@ -284,7 +355,8 @@ namespace at::native {
         return f"""
 template <typename T>
 static bool check_cudnn_depthwise_workload_sm{sm_group}(
-    T stride, T filter, T w, T ch, T bs) {{
+    T stride, T filter, T w, T ch, T bs, T h, T out_h, T out_w,
+    T out_elements, T kernel_work) {{
   // auto-generated heuristic decision tree for cuDNN SM group {sm_group}"""
 
     def codegen_dispatch(self, lines: list[str], generated_sm_groups: list[int]):
@@ -298,7 +370,7 @@ static bool check_cudnn_depthwise_workload_with_filter(
   TORCH_INTERNAL_ASSERT(sm != 0, "CUDA not available");
 
   // 1D conv
-  if(at::symint::size<T>(input, 2) == 1 && stride == 1){
+  if (at::symint::size<T>(input, 2) == 1 && stride == 1) {
     return true;
   }
   // 2D conv
@@ -312,11 +384,16 @@ static bool check_cudnn_depthwise_workload_with_filter(
   auto filter = at::symint::size<T>(weight, 3);
   // only 1/3/5 filter
   if (filter != 1 && filter != 3 && filter != 5) return false;
-  // we don't enforce square input but only check width to reduce heuristic space
-  if (at::symint::size<T>(input, 3) < 7) return false; // min width 7
+  auto h = at::symint::size<T>(input, 2);
   auto w = at::symint::size<T>(input, 3);
+  if (h < 7) return false;
+  if (w < 7) return false;
   auto ch = at::symint::size<T>(input, 1);
   auto bs = at::symint::size<T>(input, 0);
+  auto out_h = (h + 2 * (filter / 2) - filter) / stride + 1;
+  auto out_w = (w + 2 * (filter / 2) - filter) / stride + 1;
+  auto out_elements = bs * ch * out_h * out_w;
+  auto kernel_work = out_elements * filter * filter;
 """
         )
         dispatch_ranges = [
@@ -335,14 +412,16 @@ static bool check_cudnn_depthwise_workload_with_filter(
                 [
                     f"  if ({condition}) return "
                     f"check_cudnn_depthwise_workload_sm{target_group}<T>(",
-                    "      stride, filter, w, ch, bs);",
+                    "      stride, filter, w, ch, bs, h, out_h, out_w,",
+                    "      out_elements, kernel_work);",
                 ]
             )
         target_group = self.nearest_generated_group(120, generated_sm_groups)
         lines.extend(
             [
                 f"  return check_cudnn_depthwise_workload_sm{target_group}<T>(",
-                "      stride, filter, w, ch, bs);",
+                "      stride, filter, w, ch, bs, h, out_h, out_w,",
+                "      out_elements, kernel_work);",
             ]
         )
         lines.append("}\n")
@@ -457,7 +536,16 @@ static bool check_cudnn_depthwise_workload_with_filter(
 
         if self.args.validation_files:
             self.evaluate_validation(
+                "Validation",
                 self.args.validation_files,
+                self.args.tolerance,
+                models,
+                generated_sm_groups,
+            )
+        if self.args.test_files:
+            self.evaluate_validation(
+                "Test",
+                self.args.test_files,
                 self.args.tolerance,
                 models,
                 generated_sm_groups,
