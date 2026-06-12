@@ -1,18 +1,24 @@
 import argparse
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.tree import DecisionTreeClassifier
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class TrainDecisionTreeDepthwiseConv:
     def __init__(self):
-        self.features = ["sm", "bs", "ch", "w", "filter", "stride"]
+        self.sm_feature = "sm"
+        self.features = ["bs", "ch", "w", "filter", "stride"]
         self.target = "cudnn_speedup_all"
         self.classes = ["false", "true"]
+        self.sm_groups = [75, 80, 86, 89, 90, 100, 120]
         self.output_file = (
-            "../../../aten/src/ATen/autoheuristic/DepthwiseConvHeuristic.h"
+            REPO_ROOT / "aten/src/ATen/autoheuristic/DepthwiseConvHeuristic.h"
         )
         self.opt_name = "depthwise_conv"
         self.parser = argparse.ArgumentParser()
@@ -68,16 +74,47 @@ class TrainDecisionTreeDepthwiseConv:
         self.parser.add_argument(
             "--seed", type=int, default=42, help="Random seed (default: 42)"
         )
+        self.parser.add_argument(
+            "--output-file",
+            type=Path,
+            default=self.output_file,
+            help=f"Output header path (default: {self.output_file})",
+        )
+        self.parser.add_argument(
+            "--validation-files",
+            type=str,
+            nargs="+",
+            default=[],
+            help="Optional holdout CSV files used only for validation",
+        )
 
     def parse_args(self):
         return self.parser.parse_args()
+
+    def cudnn_sm_group(self, sm):
+        if sm < 80:
+            return 75
+        if sm < 86:
+            return 80
+        if sm < 89:
+            return 86
+        if sm < 90:
+            return 89
+        if sm < 100:
+            return 90
+        if sm < 120:
+            return 100
+        return 120
+
+    def nearest_generated_group(self, sm_group, generated_sm_groups):
+        return min(generated_sm_groups, key=lambda group: abs(group - sm_group))
 
     def load_and_prepare_data(self, input_files, tolerance):
         """
         Load data and prepare for binary classification.
         Filters out label 2 (equal performance within tolerance).
         """
-        required_columns = [*self.features, self.target]
+        required_columns = [self.sm_feature, *self.features, self.target]
         dfs = []
 
         for input_file in input_files:
@@ -109,6 +146,7 @@ class TrainDecisionTreeDepthwiseConv:
 
         df = pd.concat(dfs, ignore_index=True)
 
+        sm_values = df[self.sm_feature].values
         features = df[self.features].values
         speedup_values = df[self.target].values
         sample_weights = abs(speedup_values - 1.0) - tolerance
@@ -128,12 +166,16 @@ class TrainDecisionTreeDepthwiseConv:
         features = features[mask]
         labels = labels[mask]
         sample_weights = sample_weights[mask]
+        sm_values = sm_values[mask]
+        sm_groups = np.array(
+            [self.cudnn_sm_group(sm) for sm in sm_values], dtype=np.int64
+        )
 
-        return features, labels, sample_weights
+        return features, labels, sample_weights, sm_groups
 
-    def create_decision_tree(self, args, features, labels, sample_weights):
+    def create_decision_tree(self, args, features, labels, sample_weights, name):
         # Create and train decision tree
-        print("Model parameters:")
+        print(f"Model parameters for {name}:")
         print(f"  Criterion: {args.criterion}")
         print(
             f"  Max depth: {args.max_depth if args.max_depth else 'None (unlimited)'}"
@@ -156,7 +198,7 @@ class TrainDecisionTreeDepthwiseConv:
 
         model.fit(features, labels, sample_weight=sample_weights)
 
-        print("✓ Training complete!")
+        print(f"✓ Training complete for {name}!")
         print("\nTree statistics:")
         print(f"  Total nodes: {model.tree_.node_count}")
         print(f"  Leaves: {model.tree_.n_leaves}")
@@ -167,7 +209,49 @@ class TrainDecisionTreeDepthwiseConv:
         accuracy = accuracy_score(labels, predictions)
         print(f"Accuracy: {accuracy:.4f} ({accuracy * 100:.2f}%)")
 
-        return model.tree_
+        return model
+
+    def evaluate_validation(
+        self,
+        validation_files,
+        tolerance,
+        models,
+        generated_sm_groups,
+    ):
+        features, labels, _sample_weights, sm_groups = self.load_and_prepare_data(
+            input_files=validation_files, tolerance=tolerance
+        )
+        predictions = np.empty_like(labels)
+
+        print("Validation results:")
+        for sm_group in self.sm_groups:
+            mask = sm_groups == sm_group
+            if not mask.any():
+                continue
+
+            target_group = self.nearest_generated_group(sm_group, generated_sm_groups)
+            model = models[target_group]
+            group_predictions = model.predict(features[mask])
+            predictions[mask] = group_predictions
+            accuracy = accuracy_score(labels[mask], group_predictions)
+            matrix = confusion_matrix(
+                labels[mask], group_predictions, labels=[0, 1]
+            )
+            print(
+                f"  cuDNN SM group {sm_group} "
+                f"(tree sm{target_group}): "
+                f"accuracy={accuracy:.4f} ({accuracy * 100:.2f}%), "
+                f"confusion_matrix=[[{matrix[0, 0]}, {matrix[0, 1]}], "
+                f"[{matrix[1, 0]}, {matrix[1, 1]}]]"
+            )
+
+        accuracy = accuracy_score(labels, predictions)
+        matrix = confusion_matrix(labels, predictions, labels=[0, 1])
+        print(
+            f"  overall: accuracy={accuracy:.4f} ({accuracy * 100:.2f}%), "
+            f"confusion_matrix=[[{matrix[0, 0]}, {matrix[0, 1]}], "
+            f"[{matrix[1, 0]}, {matrix[1, 1]}]]"
+        )
 
     def is_leaf_node(self, tree, node_id):
         """Check if a node is a leaf node."""
@@ -178,7 +262,7 @@ class TrainDecisionTreeDepthwiseConv:
         class_values = tree.value[node_id][0]
         return self.classes[np.argmax(class_values)]
 
-    def codegen_boilerplate(self):
+    def codegen_header(self):
         header = (
             f"""// This file was generated by AutoHeuristic. Do not modify it manually!
 // To regenerate this file, take a look at the README.md file inside torchgen/_autoheuristic/{self.opt_name}/"""
@@ -189,10 +273,28 @@ class TrainDecisionTreeDepthwiseConv:
 #include <ATen/detail/CUDAHooksInterface.h>
 
 namespace at::native {
+"""
+        )
+        return header
 
+    def codegen_footer(self):
+        return "\n} // namespace at::native\n"
+
+    def codegen_tree_header(self, sm_group):
+        return f"""
 template <typename T>
-static bool check_cudnn_depthwise_workload_with_filter(const at::Tensor& input, T stride, const at::Tensor& weight) {
-  static int sm = at::detail::getCUDAHooks().getDeviceCapability();
+static bool check_cudnn_depthwise_workload_sm{sm_group}(
+    T stride, T filter, T w, T ch, T bs) {{
+  // auto-generated heuristic decision tree for cuDNN SM group {sm_group}"""
+
+    def codegen_dispatch(self, lines: list[str], generated_sm_groups: list[int]):
+        lines.append(
+            """
+template <typename T>
+static bool check_cudnn_depthwise_workload_with_filter(
+    const at::Tensor& input, T stride, const at::Tensor& weight) {
+  const int sm = at::detail::getCUDAHooks().getDeviceCapability(
+      input.get_device());
   TORCH_INTERNAL_ASSERT(sm != 0, "CUDA not available");
 
   // 1D conv
@@ -203,7 +305,10 @@ static bool check_cudnn_depthwise_workload_with_filter(const at::Tensor& input, 
   // only 1/2 stride
   if (stride != 1 && stride != 2) return false;
   // only square filters
-  if (at::symint::size<T>(weight, 2) != at::symint::size<T>(weight, 3)) return false;
+  if (at::symint::size<T>(weight, 2) !=
+      at::symint::size<T>(weight, 3)) {
+    return false;
+  }
   auto filter = at::symint::size<T>(weight, 3);
   // only 1/3/5 filter
   if (filter != 1 && filter != 3 && filter != 5) return false;
@@ -212,11 +317,35 @@ static bool check_cudnn_depthwise_workload_with_filter(const at::Tensor& input, 
   auto w = at::symint::size<T>(input, 3);
   auto ch = at::symint::size<T>(input, 1);
   auto bs = at::symint::size<T>(input, 0);
-
-  // auto-generated heuristic decision tree"""
+"""
         )
-        footer = "}\n\n} // namespace at::native\n"
-        return header, footer
+        dispatch_ranges = [
+            ("sm < 80", 75),
+            ("sm < 86", 80),
+            ("sm < 89", 86),
+            ("sm < 90", 89),
+            ("sm < 100", 90),
+            ("sm < 120", 100),
+        ]
+        for condition, sm_group in dispatch_ranges:
+            target_group = self.nearest_generated_group(
+                sm_group, generated_sm_groups
+            )
+            lines.extend(
+                [
+                    f"  if ({condition}) return "
+                    f"check_cudnn_depthwise_workload_sm{target_group}<T>(",
+                    "      stride, filter, w, ch, bs);",
+                ]
+            )
+        target_group = self.nearest_generated_group(120, generated_sm_groups)
+        lines.extend(
+            [
+                f"  return check_cudnn_depthwise_workload_sm{target_group}<T>(",
+                "      stride, filter, w, ch, bs);",
+            ]
+        )
+        lines.append("}\n")
 
     def codegen(self, tree, lines: list[str]):
         feature_names = self.features
@@ -281,7 +410,7 @@ static bool check_cudnn_depthwise_workload_with_filter(const at::Tensor& input, 
         codegen_node(0, 0)
 
     def write_heuristic_to_file(self, lines: list[str]):
-        with open(self.output_file, "w") as f:
+        with open(self.args.output_file, "w") as f:
             f.write("\n".join(lines))
 
     def generate_heuristic(self):
@@ -291,20 +420,48 @@ static bool check_cudnn_depthwise_workload_with_filter(const at::Tensor& input, 
         np.random.seed(self.args.seed)
 
         # Load data
-        features, labels, sample_weights = self.load_and_prepare_data(
+        features, labels, sample_weights, sm_groups = self.load_and_prepare_data(
             input_files=self.args.input_files, tolerance=self.args.tolerance
         )
 
-        # Create decision tree
-        tree = self.create_decision_tree(self.args, features, labels, sample_weights)
+        lines = [self.codegen_header()]
+        generated_sm_groups = []
+        models = {}
+        for sm_group in self.sm_groups:
+            mask = sm_groups == sm_group
+            if not mask.any():
+                print(f"Skipping cuDNN SM group {sm_group}: no samples")
+                continue
+            generated_sm_groups.append(sm_group)
+            model = self.create_decision_tree(
+                self.args,
+                features[mask],
+                labels[mask],
+                sample_weights[mask],
+                f"cuDNN SM group {sm_group}",
+            )
+            models[sm_group] = model
 
-        # Create C++ heuristic from decision tree
-        header, footer = self.codegen_boilerplate()
-        header += ", tolerance = " + str(self.args.tolerance)
-        lines = [header]
-        self.codegen(tree, lines)
-        lines.append(footer)
+            tree_header = self.codegen_tree_header(sm_group)
+            tree_header += ", tolerance = " + str(self.args.tolerance)
+            lines.append(tree_header)
+            self.codegen(model.tree_, lines)
+            lines.append("}\n")
+
+        if not generated_sm_groups:
+            raise RuntimeError("No cuDNN SM groups had training samples")
+
+        self.codegen_dispatch(lines, generated_sm_groups)
+        lines.append(self.codegen_footer())
         self.write_heuristic_to_file(lines)
+
+        if self.args.validation_files:
+            self.evaluate_validation(
+                self.args.validation_files,
+                self.args.tolerance,
+                models,
+                generated_sm_groups,
+            )
 
 
 if __name__ == "__main__":
