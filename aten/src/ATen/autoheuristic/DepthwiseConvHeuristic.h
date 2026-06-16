@@ -13,106 +13,92 @@ static bool check_cudnn_depthwise_workload_sm80(
     T stride, T filter, T w, T ch, T bs, T h, T out_h, T out_w,
     T out_elements, T kernel_work) {
   // auto-generated heuristic decision tree for cuDNN SM group 80, tolerance = 0.0
-  if (stride <= 1) {
-    if (kernel_work <= 106624) {
-      if (bs <= 3) {
-        return true;
-      }
-      else return true;
-    }
-    else {
-      if (kernel_work <= 487936) {
-        if (bs <= 6) {
-          return true;
+  if (stride <= 1) return true;
+  else {
+    if (ch <= 192) {
+      if (filter <= 4) {
+        if (filter <= 2) {
+          if (bs <= 2) return true;
+          else {
+            if (out_elements <= 3178496) {
+              if (w <= 17) return true;
+              else return false;
+            }
+            else return true;
+          }
         }
         else return true;
       }
       else {
-        if (out_elements <= 57856) return true;
+        if (h <= 17) return true;
         else {
-          if (out_elements <= 115712) {
-            return true;
-          }
+          if (kernel_work <= 67276800) return false;
           else return true;
         }
       }
     }
+    else {
+      if (bs <= 2) {
+        if (filter <= 4) return true;
+        else return false;
+      }
+      else return true;
+    }
   }
+}
+
+
+template <typename T>
+static bool check_cudnn_depthwise_workload_sm89(
+    T stride, T filter, T w, T ch, T bs, T h, T out_h, T out_w,
+    T out_elements, T kernel_work) {
+  // auto-generated heuristic decision tree for cuDNN SM group 89, tolerance = 0.0
+  if (stride <= 1) return true;
   else {
-    if (ch <= 96) {
-      if (filter <= 4) {
-        if (kernel_work <= 1705984) {
-          if (out_elements <= 82944) {
-            if (out_elements <= 41472) {
-              if (out_elements <= 20736) {
-                return true;
-              }
-              else return true;
-            }
-            else return true;
-          }
-          else {
-            if (h <= 88) {
-              return false;
-            }
-            else return true;
-          }
-        }
-        else {
-          return true;
-        }
+    if (ch <= 192) {
+      if (out_h <= 9) {
+        if (ch <= 48) return false;
+        else return true;
       }
       else {
-        if (out_h <= 10) return true;
-        else {
-          if (kernel_work <= 1446400) return false;
-          else {
-            return false;
+        if (bs <= 48) {
+          if (bs <= 2) {
+            if (filter <= 4) {
+              if (kernel_work <= 115712) return false;
+              else return true;
+            }
+            else return false;
           }
+          else {
+            if (filter <= 4) {
+              if (filter <= 2) return false;
+              else {
+                if (ch <= 48) return false;
+                else return true;
+              }
+            }
+            else return false;
+          }
+        }
+        else {
+          if (kernel_work <= 27557888) return false;
+          else return true;
         }
       }
     }
     else {
-      if (filter <= 4) {
-        if (ch <= 192) {
-          if (filter <= 2) {
-            if (out_elements <= 925696) {
-              return true;
-            }
+      if (out_w <= 12) return true;
+      else {
+        if (filter <= 4) {
+          if (kernel_work <= 3178496) {
+            if (bs <= 2) return true;
             else return false;
           }
           else return true;
         }
         else {
-          if (ch <= 384) {
-            if (out_elements <= 2654208) return true;
-            else {
-              return true;
-            }
-          }
+          if (bs <= 12) return false;
           else return true;
-        }
-      }
-      else {
-        if (bs <= 3) {
-          if (w <= 21) return true;
-          else {
-            return false;
-          }
-        }
-        else {
-          if (ch <= 192) {
-            return true;
-          }
-          else {
-            if (bs <= 6) return true;
-            else {
-              if (ch <= 384) {
-                return true;
-              }
-              else return true;
-            }
-          }
         }
       }
     }
@@ -126,139 +112,46 @@ static bool check_cudnn_depthwise_workload_sm90(
     T out_elements, T kernel_work) {
   // auto-generated heuristic decision tree for cuDNN SM group 90, tolerance = 0.0
   if (stride <= 1) {
-    if (kernel_work <= 557056) {
-      if (bs <= 12) {
-        if (bs <= 6) {
-          if (ch <= 384) {
-            if (kernel_work <= 357504) {
-              return true;
-            }
+    if (kernel_work <= 220416) {
+      if (bs <= 6) return true;
+      else return false;
+    }
+    else return true;
+  }
+  else {
+    if (ch <= 192) {
+      if (filter <= 4) {
+        if (filter <= 2) {
+          if (bs <= 2) return true;
+          else {
+            if (kernel_work <= 49664) return true;
+            else return false;
+          }
+        }
+        else {
+          if (ch <= 48) {
+            if (w <= 38) return false;
             else return true;
           }
           else return true;
         }
-        else return true;
       }
       else return false;
     }
     else {
-      if (kernel_work <= 975872) {
-        return true;
-      }
+      if (out_w <= 12) return true;
       else {
-        if (out_elements <= 165888) {
-          return true;
-        }
-        else return true;
-      }
-    }
-  }
-  else {
-    if (ch <= 96) {
-      if (out_elements <= 3702784) {
-        if (w <= 21) {
-          if (kernel_work <= 430592) {
-            if (filter <= 4) {
-              if (filter <= 2) return false;
+        if (filter <= 4) {
+          if (filter <= 2) {
+            if (bs <= 2) return true;
+            else {
+              if (ch <= 768) return false;
               else return true;
             }
-            else return false;
           }
           else return true;
         }
-        else {
-          if (out_elements <= 1851392) {
-            if (h <= 88) {
-              if (ch <= 48) {
-                return false;
-              }
-              else {
-                if (filter <= 2) return false;
-                else {
-                  return false;
-                }
-              }
-            }
-            else {
-              if (filter <= 4) {
-                return false;
-              }
-              else return false;
-            }
-          }
-          else return false;
-        }
-      }
-      else return true;
-    }
-    else {
-      if (filter <= 2) {
-        if (ch <= 768) {
-          if (bs <= 1) return true;
-          else {
-            if (out_w <= 5) return true;
-            else {
-              if (h <= 21) return false;
-              else {
-                if (bs <= 3) return false;
-                else {
-                  if (ch <= 384) {
-                    return false;
-                  }
-                  else return false;
-                }
-              }
-            }
-          }
-        }
-        else {
-          if (kernel_work <= 7405568) {
-            return true;
-          }
-          else return false;
-        }
-      }
-      else {
-        if (bs <= 3) {
-          if (filter <= 4) {
-            if (ch <= 192) return true;
-            else {
-              return true;
-            }
-          }
-          else {
-            if (out_h <= 10) return true;
-            else {
-              if (out_elements <= 925696) {
-                return false;
-              }
-              else return true;
-            }
-          }
-        }
-        else {
-          if (ch <= 192) {
-            if (filter <= 4) {
-              return true;
-            }
-            else {
-              return true;
-            }
-          }
-          else {
-            if (bs <= 6) {
-              return true;
-            }
-            else {
-              if (out_elements <= 462848) {
-                return true;
-              }
-              else {
-                return true;
-              }
-            }
-          }
-        }
+        else return false;
       }
     }
   }
@@ -270,88 +163,99 @@ static bool check_cudnn_depthwise_workload_sm100(
     T stride, T filter, T w, T ch, T bs, T h, T out_h, T out_w,
     T out_elements, T kernel_work) {
   // auto-generated heuristic decision tree for cuDNN SM group 100, tolerance = 0.0
-  if (stride <= 1) {
-    if (kernel_work <= 115248) {
-      if (out_h <= 17) {
-        if (out_elements <= 3920) return true;
+  if (stride <= 1) return true;
+  else {
+    if (ch <= 112) {
+      if (out_elements <= 3178496) {
+        if (out_w <= 4) return true;
         else {
-          if (filter <= 2) {
-            if (bs <= 6) {
-              if (bs <= 1) return true;
-              else {
-                if (bs <= 3) return false;
-                else return true;
-              }
-            }
-            else {
-              return false;
-            }
-          }
-          else return false;
-        }
-      }
-      else {
-        return true;
-      }
-    }
-    else {
-      if (out_elements <= 112128) {
-        if (filter <= 4) {
-          if (ch <= 80) {
-            if (out_h <= 17) return false;
-            else return true;
-          }
+          if (kernel_work <= 35200) return true;
           else {
-            return true;
-          }
-        }
-        else {
-          if (w <= 24) {
-            if (out_elements <= 15680) return true;
-            else {
-              if (out_h <= 12) {
-                return true;
-              }
+            if (out_h <= 50) {
+              if (filter <= 2) return false;
               else {
-                return true;
-              }
-            }
-          }
-          else return true;
-        }
-      }
-      else {
-        if (out_elements <= 454144) {
-          if (ch <= 48) {
-            if (w <= 29) {
-              return true;
-            }
-            else {
-              return true;
-            }
-          }
-          else {
-            if (kernel_work <= 2534400) {
-              if (kernel_work <= 397312) return true;
-              else {
-                if (ch <= 320) {
-                  if (bs <= 12) {
-                    return true;
+                if (ch <= 48) return false;
+                else {
+                  if (h <= 17) {
+                    if (h <= 12) return false;
+                    else return true;
                   }
+                  else {
+                    if (bs <= 24) {
+                      if (filter <= 4) {
+                        if (kernel_work <= 1787904) {
+                          if (out_elements <= 57856) return false;
+                          else return true;
+                        }
+                        else return false;
+                      }
+                      else return false;
+                    }
+                    else {
+                      if (out_elements <= 1728512) return false;
+                      else return true;
+                    }
+                  }
+                }
+              }
+            }
+            else {
+              if (filter <= 4) {
+                if (bs <= 2) return true;
+                else {
+                  if (kernel_work <= 5185536) return false;
                   else return true;
                 }
-                else return true;
               }
-            }
-            else {
-              return true;
+              else return false;
             }
           }
         }
+      }
+      else return true;
+    }
+    else {
+      if (filter <= 2) {
+        if (ch <= 768) {
+          if (out_w <= 4) return true;
+          else {
+            if (kernel_work <= 9011200) {
+              if (bs <= 2) return true;
+              else {
+                if (kernel_work <= 3633152) {
+                  if (w <= 24) {
+                    if (bs <= 12) return true;
+                    else return false;
+                  }
+                  else return false;
+                }
+                else return false;
+              }
+            }
+            else return true;
+          }
+        }
+        else return true;
+      }
+      else {
+        if (bs <= 2) {
+          if (w <= 24) return true;
+          else {
+            if (filter <= 4) {
+              if (w <= 60) {
+                if (ch <= 704) return false;
+                else return true;
+              }
+              else return true;
+            }
+            else return false;
+          }
+        }
         else {
-          if (out_elements <= 897024) {
-            if (ch <= 80) {
-              return true;
+          if (ch <= 192) {
+            if (bs <= 10) {
+              if (kernel_work <= 1844224) return true;
+              else return false;
             }
             else return true;
           }
@@ -360,237 +264,66 @@ static bool check_cudnn_depthwise_workload_sm100(
       }
     }
   }
+}
+
+
+template <typename T>
+static bool check_cudnn_depthwise_workload_sm120(
+    T stride, T filter, T w, T ch, T bs, T h, T out_h, T out_w,
+    T out_elements, T kernel_work) {
+  // auto-generated heuristic decision tree for cuDNN SM group 120, tolerance = 0.0
+  if (stride <= 1) {
+    if (kernel_work <= 278528) {
+      if (out_h <= 17) {
+        if (kernel_work <= 46256) return false;
+        else return true;
+      }
+      else return true;
+    }
+    else return true;
+  }
   else {
-    if (ch <= 192) {
-      if (out_elements <= 3059712) {
-        if (bs <= 1) {
-          if (filter <= 4) {
-            if (h <= 17) {
-              if (filter <= 2) return true;
-              else return false;
-            }
-            else {
-              if (out_elements <= 28032) {
-                return true;
-              }
-              else return true;
-            }
-          }
-          else {
-            if (out_elements <= 41472) {
-              return false;
-            }
-            else return false;
-          }
+    if (out_h <= 9) {
+      if (ch <= 112) {
+        if (w <= 10) {
+          if (out_elements <= 8192) return false;
+          else return true;
         }
-        else {
-          if (w <= 8) {
-            if (out_elements <= 14336) {
-              if (kernel_work <= 8704) return true;
-              else {
-                return false;
-              }
-            }
-            else {
-              if (ch <= 80) {
-                if (out_elements <= 24576) return true;
-                else return false;
-              }
-              else {
-                return true;
-              }
-            }
-          }
-          else {
-            if (out_elements <= 1851392) {
-              if (ch <= 112) {
-                if (ch <= 80) {
-                  if (out_elements <= 897024) {
-                    if (h <= 17) {
-                      if (bs <= 24) {
-                        if (out_elements <= 19584) {
-                          return false;
-                        }
-                        else return false;
-                      }
-                      else return false;
-                    }
-                    else {
-                      if (bs <= 6) {
-                        if (ch <= 48) return false;
-                        else {
-                          if (filter <= 4) {
-                            return false;
-                          }
-                          else return false;
-                        }
-                      }
-                      else {
-                        if (out_elements <= 663552) return false;
-                        else {
-                          return false;
-                        }
-                      }
-                    }
-                  }
-                  else {
-                    if (kernel_work <= 19615744) {
-                      if (kernel_work <= 5263360) return false;
-                      else return true;
-                    }
-                    else return false;
-                  }
-                }
-                else {
-                  if (filter <= 2) return false;
-                  else {
-                    if (filter <= 4) return true;
-                    else return false;
-                  }
-                }
-              }
-              else {
-                if (filter <= 4) {
-                  if (filter <= 2) {
-                    if (kernel_work <= 115712) return false;
-                    else {
-                      return false;
-                    }
-                  }
-                  else {
-                    if (kernel_work <= 1041408) return false;
-                    else {
-                      return true;
-                    }
-                  }
-                }
-                else {
-                  return false;
-                }
-              }
-            }
-            else {
-              if (filter <= 4) {
-                if (kernel_work <= 10924032) return false;
-                else return true;
-              }
-              else return false;
-            }
-          }
-        }
+        else return false;
       }
       else {
-        if (kernel_work <= 5308416) return false;
-        else {
-          if (filter <= 4) {
-            if (kernel_work <= 9011200) return true;
-            else {
-              return true;
-            }
-          }
-          else {
-            if (kernel_work <= 132710400) return false;
-            else {
-              return true;
-            }
-          }
-        }
+        if (out_elements <= 638976) return true;
+        else return false;
       }
     }
     else {
-      if (kernel_work <= 55115776) {
-        if (w <= 24) {
+      if (kernel_work <= 202752) {
+        if (bs <= 6) {
+          if (out_elements <= 14688) return false;
+          else return true;
+        }
+        else return false;
+      }
+      else {
+        if (out_h <= 12) {
+          if (bs <= 20) return true;
+          else return false;
+        }
+        else {
           if (filter <= 2) {
-            if (ch <= 448) {
-              if (out_elements <= 82944) return true;
+            if (kernel_work <= 21233664) {
+              if (bs <= 2) {
+                if (kernel_work <= 598016) return true;
+                else return false;
+              }
               else return false;
             }
             else {
-              if (ch <= 768) return true;
-              else {
-                return true;
-              }
-            }
-          }
-          else {
-            if (kernel_work <= 460992) {
-              if (out_w <= 6) {
-                return true;
-              }
-              else return true;
-            }
-            else {
-              if (ch <= 320) {
-                return true;
-              }
-              else {
-                if (bs <= 3) return true;
-                else {
-                  return true;
-                }
-              }
-            }
-          }
-        }
-        else {
-          if (filter <= 4) {
-            if (filter <= 2) {
-              if (bs <= 3) {
-                if (kernel_work <= 165888) return true;
-                else {
-                  return true;
-                }
-              }
-              else {
-                if (ch <= 768) {
-                  if (out_elements <= 12713984) {
-                    if (ch <= 448) {
-                      return false;
-                    }
-                    else {
-                      if (kernel_work <= 5308416) return true;
-                      else return false;
-                    }
-                  }
-                  else {
-                    if (ch <= 320) return true;
-                    else return false;
-                  }
-                }
-                else {
-                  if (kernel_work <= 5308416) return true;
-                  else {
-                    if (out_elements <= 11829248) return false;
-                    else return true;
-                  }
-                }
-              }
-            }
-            else {
-              return true;
-            }
-          }
-          else {
-            if (bs <= 6) {
-              return false;
-            }
-            else {
-              if (ch <= 448) return false;
+              if (ch <= 768) return false;
               else return true;
             }
           }
-        }
-      }
-      else {
-        if (bs <= 3) return true;
-        else {
-          if (filter <= 2) return true;
-          else {
-            if (out_elements <= 3633152) return true;
-            else {
-              return true;
-            }
-          }
+          else return false;
         }
       }
     }
@@ -637,10 +370,10 @@ static bool check_cudnn_depthwise_workload_with_filter(
   if (sm < 86) return check_cudnn_depthwise_workload_sm80<T>(
       stride, filter, w, ch, bs, h, out_h, out_w,
       out_elements, kernel_work);
-  if (sm < 89) return check_cudnn_depthwise_workload_sm90<T>(
+  if (sm < 89) return check_cudnn_depthwise_workload_sm89<T>(
       stride, filter, w, ch, bs, h, out_h, out_w,
       out_elements, kernel_work);
-  if (sm < 90) return check_cudnn_depthwise_workload_sm90<T>(
+  if (sm < 90) return check_cudnn_depthwise_workload_sm89<T>(
       stride, filter, w, ch, bs, h, out_h, out_w,
       out_elements, kernel_work);
   if (sm < 100) return check_cudnn_depthwise_workload_sm90<T>(
@@ -649,7 +382,7 @@ static bool check_cudnn_depthwise_workload_with_filter(
   if (sm < 120) return check_cudnn_depthwise_workload_sm100<T>(
       stride, filter, w, ch, bs, h, out_h, out_w,
       out_elements, kernel_work);
-  return check_cudnn_depthwise_workload_sm100<T>(
+  return check_cudnn_depthwise_workload_sm120<T>(
       stride, filter, w, ch, bs, h, out_h, out_w,
       out_elements, kernel_work);
 }

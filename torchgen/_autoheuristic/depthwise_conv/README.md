@@ -1,77 +1,59 @@
 ## Regenerating the current heuristic
-For the full multi-machine collection workflow, see
-`BENCHMARKING_PROTOCOL.md`.
+Data collection is a multi-machine process. See `BENCHMARKING_PROTOCOL.md` for
+how to collect a train/validation/test dataset on each GPU type and what to
+share back.
 
-To regenerate the current heuristic with the downloaded data plus any newly
-collected train, validation, and test splits, run:
+Once the per-machine CSVs (and their `*.metadata.json` sidecars) have been
+gathered into one checkout, regenerate the checked-in heuristic with:
 
 ```
-bash get_depthwiseconv_dataset.sh
-
-python gen_data_depthwiseconv.py --grid train --device DEVICE
-python gen_data_depthwiseconv.py --grid validation --device DEVICE
-python gen_data_depthwiseconv.py --grid test --device DEVICE
-
 python train_decision_depthwiseconv.py \
-  [train input files ...] \
-  --validation-files [validation files ...] \
-  --test-files [test files ...]
+  <train CSVs ...> \
+  --min-samples-leaf 16 \
+  --validation-files <validation CSVs ...> \
+  --test-files <test CSVs ...>
 ```
+
+`--min-samples-leaf 16` is the setting used for the checked-in trees; it keeps
+the generated trees from overfitting to individual benchmark points. The
+validation and test files are never used for training; they only produce the
+holdout accuracy, confusion-matrix, and policy-metric reports.
 
 ## Dataset provenance
 The benchmark grid and data-generation procedure are defined in
-`gen_data_depthwiseconv.py`. The benchmark script writes a
-`*.metadata.json` sidecar next to each generated CSV with the PyTorch commit,
-device type/name, SM, cuDNN frontend version, cuDNN backend version, collection
-date, and benchmark grid.
+`gen_data_depthwiseconv.py`. Every run writes a `*.metadata.json` sidecar next
+to its CSV recording the PyTorch commit, device name/type, SM, cuDNN frontend
+version, cuDNN backend version, collection date, and benchmark grid.
 
-The checked-in heuristic was generated from these training inputs:
+A separate decision tree is generated per cuDNN SM heuristic group. The
+checked-in heuristic was built from the following machines. Each machine
+contributed a train (1584 rows), validation (594 rows), and test (288 rows)
+split. Train/val/test accuracy is the per-group accuracy reported by the
+training run that produced the current header.
 
-|Input|Rows|SM group|
-|---|---|---|
-|`data_depthwiseconv_A100.csv`|2016|sm80|
-|`data_depthwiseconv_H100.csv`|2016|sm90|
-|`data_depthwiseconv_GB200.csv`|2016|sm100|
-|`data_depthwiseconv_GB300.csv`|2016|sm100|
-|`data_depthwiseconv_protocol_train_local.csv`|1008|sm100|
-|`data_depthwiseconv_protocol_train_extra_local.csv`|576|sm100|
+|SM group tree|Machine(s)|Device name(s)|SM|Train acc|Val acc|Test acc|
+|---|---|---|---|---:|---:|---:|
+|`sm80`|A100|NVIDIA A100-PCIE-40GB|80|93.75%|89.73%|88.89%|
+|`sm89`|L40|NVIDIA L40|89|90.33%|86.68%|88.50%|
+|`sm90`|H100|NVIDIA H100 80GB HBM3|90|93.04%|92.42%|88.50%|
+|`sm100`|GB200, GB300, Thor|NVIDIA GB200 / GB300 / Thor|100 / 103 / 110|87.68%|86.59%|85.68%|
+|`sm120`|RTX PRO 6000, Spark|NVIDIA RTX PRO 6000 Blackwell Server Edition / GB10|120 / 121|89.96%|87.24%|87.54%|
 
-The local protocol data and holdout results were collected with:
+Aggregate holdout numbers across all groups: overall validation accuracy
+87.89%, overall test accuracy 87.25%. On the test set the generated heuristic
+reaches a 1.935x mean speedup over the native kernel, versus 1.876x for
+always-cuDNN and 1.963x for an oracle that picks the faster kernel per shape
+(the heuristic is within ~1.5% of the oracle).
 
-|Field|Value|
-|---|---|
-|PyTorch commit|f4bdea026bdf3e86cf13216a83d6672b29ebc69e|
-|Device|NVIDIA GB200 (CUDA, sm100)|
-|cuDNN frontend version|12201 (1.22.1)|
-|cuDNN backend version|92300 (9.23.0)|
-|Collection date|2026-06-12|
+All datasets were collected at PyTorch commit
+`5140876473ecc91ca14c695d8a40690f4c8919f3` with cuDNN frontend version 1.22.1
+(`12201`) and cuDNN backend version 9.23.0 (`92300`), on 2026-06-12 through
+2026-06-15.
 
-The local validation holdout has 594 rows and the local final test holdout has
-288 rows.
-
-## Benchmarking protocol
-Collect train, validation, and final test data separately:
-
-```
-python gen_data_depthwiseconv.py --grid train --device DEVICE
-python gen_data_depthwiseconv.py --grid validation --device DEVICE
-python gen_data_depthwiseconv.py --grid test --device DEVICE
-```
-
-The `--device` flag is optional, and allows you to specify a custom shorter
-label for the GPU being tested. Output will be saved to
-`data_depthwiseconv_[GRID]_[DEVICE].csv` unless `--output` is provided. Use
-`--benchmark-iters` and `--warmup-iters` to override the default per-shape
-iteration counts.
-
-The train grid includes the original square shape family plus additional
-non-square shapes, plus targeted square cases with `bs={4,16,64}` and
-`ch={64,128,256,512}` to cover gaps from the original downloaded grid. The
-`train-extra` grid can be used to benchmark only those targeted additional
-cases when the base train grid has already been collected. The validation grid
-uses different batch sizes, channels, and shapes from the train grid and is
-used while tuning tree features or model complexity. The test grid is smaller,
-fully held out, and should be used for final reporting only.
+The `sm75` (T4, RTX8000) and `sm86` (A10) groups are not generated because that
+hardware was not available when this dataset was collected. Runtime dispatch
+falls back to the nearest generated tree for those devices (`sm75` -> `sm80`,
+`sm86` -> `sm89`); see the SM grouping notes below.
 
 ## Heuristic generation
 To generate a new heuristic from benchmarking data, run the training script:

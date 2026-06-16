@@ -131,11 +131,15 @@ CSVs and hold out validation/test CSVs:
 ```
 python train_decision_depthwiseconv.py \
   data_depthwiseconv_train_*.csv \
-  data_depthwiseconv_train_extra_*.csv \
   --min-samples-leaf 16 \
   --validation-files data_depthwiseconv_validation_*.csv \
   --test-files data_depthwiseconv_test_*.csv
 ```
+
+The current `train` grid already includes the targeted extra cases, so a single
+set of `train` CSVs is sufficient. If you have older datasets that were split
+into a separate `train-extra` CSV, add `data_depthwiseconv_train_extra_*.csv` to
+the input file list as well.
 
 This regenerates:
 
@@ -149,7 +153,6 @@ To compare experiments without overwriting the checked-in header, pass
 ```
 python train_decision_depthwiseconv.py \
   data_depthwiseconv_train_*.csv \
-  data_depthwiseconv_train_extra_*.csv \
   --min-samples-leaf 16 \
   --validation-files data_depthwiseconv_validation_*.csv \
   --test-files data_depthwiseconv_test_*.csv \
