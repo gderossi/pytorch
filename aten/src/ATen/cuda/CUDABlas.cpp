@@ -2250,8 +2250,10 @@ void grouped_gemm(
   auto ltworkspace = CublasLtWorkspace();
   auto stream = at::cuda::getCurrentCUDAStream();
   preference.setAttribute(CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, ltworkspace.size);
-  preference.setAttribute(CUBLASLT_MATMUL_PREF_GROUPED_DESC_D_AVERAGE_ROWS, avgM);
-  preference.setAttribute(CUBLASLT_MATMUL_PREF_GROUPED_DESC_D_AVERAGE_COLS, avgN);
+  // cuBLASLt currently swaps these grouped D averages internally when
+  // selecting heuristics, so pass them swapped to recover optimal kernels.
+  preference.setAttribute(CUBLASLT_MATMUL_PREF_GROUPED_DESC_D_AVERAGE_ROWS, avgN);
+  preference.setAttribute(CUBLASLT_MATMUL_PREF_GROUPED_DESC_D_AVERAGE_COLS, avgM);
   preference.setAttribute(CUBLASLT_MATMUL_PREF_GROUPED_AVERAGE_REDUCTION_DIM, avgK);
 
   cublasLtMatmulHeuristicResult_t heuristicResult = {};

@@ -17,6 +17,67 @@ namespace at::native {
 
 namespace {
 
+struct RowMajorLayout {
+  char trans;
+  int64_t ld;
+};
+
+RowMajorLayout get_row_major_layout(const Tensor& mat) {
+  const int64_t row_dim = mat.dim() - 2;
+  const int64_t col_dim = mat.dim() - 1;
+  const int64_t rows = mat.size(row_dim);
+  const int64_t cols = mat.size(col_dim);
+  const int64_t row_stride = mat.stride(row_dim);
+  const int64_t col_stride = mat.stride(col_dim);
+  if (col_stride == 1 && row_stride >= std::max<int64_t>(1, cols)) {
+    return {'n', row_stride};
+  }
+  if (row_stride == 1 && col_stride >= std::max<int64_t>(1, rows)) {
+    return {'t', col_stride};
+  }
+  TORCH_CHECK(false, "Invalid strides/sizes, got ", mat.strides(), " for strides and ", mat.sizes(), " for sizes");
+}
+
+void check_cublaslt_grouped_alignment(
+    bool a_is_2d,
+    bool b_is_2d,
+    int64_t m,
+    int64_t n,
+    int64_t k,
+    int64_t alignment,
+    char transa,
+    char transb) {
+  if (a_is_2d && b_is_2d) {
+    TORCH_CHECK(
+        k % alignment == 0 || (transa == 't' && transb == 'n'),
+        "cublasLt grouped GEMM with jagged K not aligned to 16 bytes requires transa=t and transb=n, got transa=",
+        transa,
+        " transb=",
+        transb,
+        " K=",
+        k);
+  } else if (a_is_2d && !b_is_2d) {
+    TORCH_CHECK(
+        m % alignment == 0 || !(transa == 't' && transb == 't'),
+        "cublasLt grouped GEMM with jagged M not aligned to 16 bytes does not support transa=t and transb=t, got M=",
+        m);
+  } else if (!a_is_2d && b_is_2d) {
+    TORCH_CHECK(
+        n % alignment == 0 || !(transa == 'n' && transb == 'n'),
+        "cublasLt grouped GEMM with jagged N not aligned to 16 bytes does not support transa=n and transb=n, got N=",
+        n);
+  } else {
+    TORCH_CHECK(
+        k % alignment == 0 || (transa == 't' && transb == 'n'),
+        "cublasLt grouped GEMM with K not aligned to 16 bytes requires transa=t and transb=n, got transa=",
+        transa,
+        " transb=",
+        transb,
+        " K=",
+        k);
+  }
+}
+
 template <typename IndexType>
 __global__ void populate_cublas_grouped_args_kernel(
     const int32_t* __restrict__ offs,
@@ -159,26 +220,30 @@ cublasGroupedArgs::cublasGroupedArgs(
     const std::optional<Tensor>& offs,
     Tensor& c,
     int batchCount_,
-    bool needs_int64)
-    : cublasCommonArgs(mat1, mat2, c) {
+    bool needs_int64) {
   const bool a_is_2d = mat1.dim() == 2;
   const bool b_is_2d = mat2.dim() == 2;
   if (a_is_2d || b_is_2d) {
     TORCH_CHECK(offs.has_value(), "Offsets tensor must be provided when at least one input is 2D");
   }
 
-  const int64_t element_size = mata->element_size();
-  const int64_t out_element_size = result->element_size();
+  const RowMajorLayout a_layout = get_row_major_layout(mat1);
+  const RowMajorLayout b_layout = get_row_major_layout(mat2);
+  transa = a_layout.trans;
+  transb = b_layout.trans;
+
+  const int64_t element_size = mat1.element_size();
+  const int64_t out_element_size = c.element_size();
 
   batchCount = batchCount_;
   use_int64 = needs_int64;
 
-  const int64_t cublas_m = m;
-  const int64_t cublas_n = n;
-  int64_t cublas_k = k;
-  const int64_t lda_val = lda;
-  const int64_t ldb_val = ldb;
-  const int64_t ldd_val = result_ld;
+  int64_t cublas_m = a_is_2d ? mat1.size(0) : mat1.size(1);
+  int64_t cublas_n = b_is_2d ? mat2.size(1) : mat2.size(2);
+  int64_t cublas_k = mat1.size(-1);
+  const int64_t lda_val = a_layout.ld;
+  const int64_t ldb_val = b_layout.ld;
+  const int64_t ldd_val = c.stride(-2);
 
   // Determine per-case which dimensions are variable (delta-based)
   // and how pointer strides work
@@ -191,40 +256,51 @@ cublasGroupedArgs::cublasGroupedArgs(
     // 2D x 2D: jagged K
     const int64_t jagged_k_bound = std::min(mat1.size(-1), mat2.size(-2));
     k_is_delta = true;
-    a_offs_stride = mata->stride(-2) * element_size;
-    b_offs_stride = matb->stride(-1) * element_size;
-    d_idx_stride = result->stride(0) * out_element_size;
+    a_offs_stride = mat1.stride(-1) * element_size;
+    b_offs_stride = mat2.stride(-2) * element_size;
+    d_idx_stride = c.stride(0) * out_element_size;
     m = cublas_m;
     n = cublas_n;
     k = jagged_k_bound / batchCount;
     cublas_k = jagged_k_bound;
   } else if (a_is_2d && !b_is_2d) {
-    // 2D x 3D: jagged M (user M varies, cublas n varies)
-    n_is_delta = true;
-    a_idx_stride = mata->stride(0) * element_size;
-    b_offs_stride = matb->stride(-2) * element_size;
-    d_offs_stride = result->stride(-2) * out_element_size;
-    m = cublas_m;
-    n = cublas_n / batchCount;
-    k = cublas_k;
-  } else if (!a_is_2d && b_is_2d) {
-    // 3D x 2D: jagged N (user N varies, cublas m varies)
+    // 2D x 3D: jagged M
     m_is_delta = true;
-    a_offs_stride = mata->stride(-1) * element_size;
-    b_idx_stride = matb->stride(0) * element_size;
-    d_offs_stride = result->stride(-1) * out_element_size;
+    a_offs_stride = mat1.stride(-2) * element_size;
+    b_idx_stride = mat2.stride(0) * element_size;
+    d_offs_stride = c.stride(-2) * out_element_size;
     m = cublas_m / batchCount;
     n = cublas_n;
     k = cublas_k;
+  } else if (!a_is_2d && b_is_2d) {
+    // 3D x 2D: jagged N
+    n_is_delta = true;
+    a_idx_stride = mat1.stride(0) * element_size;
+    b_offs_stride = mat2.stride(-1) * element_size;
+    d_offs_stride = c.stride(-1) * out_element_size;
+    m = cublas_m;
+    n = cublas_n / batchCount;
+    k = cublas_k;
   } else {
     // 3D x 3D: all dimensions fixed
-    a_idx_stride = mata->stride(0) * element_size;
-    b_idx_stride = matb->stride(0) * element_size;
-    d_idx_stride = result->stride(0) * out_element_size;
+    a_idx_stride = mat1.stride(0) * element_size;
+    b_idx_stride = mat2.stride(0) * element_size;
+    d_idx_stride = c.stride(0) * out_element_size;
     m = cublas_m;
     n = cublas_n;
     k = cublas_k;
   }
+
+  const int64_t alignment = 16 / element_size;
+  check_cublaslt_grouped_alignment(
+      a_is_2d,
+      b_is_2d,
+      cublas_m,
+      cublas_n,
+      cublas_k,
+      alignment,
+      transa,
+      transb);
 
   // Determine element size for dimension arrays
   const size_t dim_elem_size = use_int64 ? sizeof(int64_t) : sizeof(int32_t);
@@ -237,11 +313,11 @@ cublasGroupedArgs::cublasGroupedArgs(
       static_cast<int64_t>(batchCount) * 6 * dim_elem_size +
       static_cast<int64_t>(batchCount) * 5 * sizeof(int64_t) +
       2 * sizeof(float);
-  buf = at::empty({buf_bytes}, mata->options().dtype(at::kByte));
+  buf = at::empty({buf_bytes}, mat1.options().dtype(at::kByte));
 
-  const int64_t base_A = reinterpret_cast<int64_t>(mata->data_ptr());
-  const int64_t base_B = reinterpret_cast<int64_t>(matb->data_ptr());
-  const int64_t base_D = reinterpret_cast<int64_t>(result->data_ptr());
+  const int64_t base_A = reinterpret_cast<int64_t>(mat1.data_ptr());
+  const int64_t base_B = reinterpret_cast<int64_t>(mat2.data_ptr());
+  const int64_t base_D = reinterpret_cast<int64_t>(c.data_ptr());
 
   const int32_t* offs_ptr = offs.has_value()
       ? static_cast<const int32_t*>(offs.value().data_ptr())
