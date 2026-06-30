@@ -9,6 +9,31 @@ namespace at::native {
 
 
 template <typename T>
+static bool check_cudnn_depthwise_workload_sm75(
+    T stride, T filter, T w, T ch, T bs, T h, T out_h, T out_w,
+    T out_elements, T kernel_work) {
+  // auto-generated heuristic decision tree for cuDNN SM group 75, tolerance = 0.0
+  if (stride <= 1) return true;
+  else {
+    if (filter <= 4) {
+      if (ch <= 48) {
+        if (out_elements <= 165888) return true;
+        else {
+          if (filter <= 2) return false;
+          else return true;
+        }
+      }
+      else return true;
+    }
+    else {
+      if (out_w <= 12) return true;
+      else return false;
+    }
+  }
+}
+
+
+template <typename T>
 static bool check_cudnn_depthwise_workload_sm80(
     T stride, T filter, T w, T ch, T bs, T h, T out_h, T out_w,
     T out_elements, T kernel_work) {
@@ -43,6 +68,43 @@ static bool check_cudnn_depthwise_workload_sm80(
         else return false;
       }
       else return true;
+    }
+  }
+}
+
+
+template <typename T>
+static bool check_cudnn_depthwise_workload_sm86(
+    T stride, T filter, T w, T ch, T bs, T h, T out_h, T out_w,
+    T out_elements, T kernel_work) {
+  // auto-generated heuristic decision tree for cuDNN SM group 86, tolerance = 0.0
+  if (stride <= 1) return true;
+  else {
+    if (filter <= 4) {
+      if (ch <= 80) {
+        if (out_elements <= 165888) return true;
+        else {
+          if (filter <= 2) return false;
+          else {
+            if (ch <= 48) return false;
+            else return true;
+          }
+        }
+      }
+      else {
+        if (ch <= 112) {
+          if (filter <= 2) {
+            if (out_elements <= 182784) return true;
+            else return false;
+          }
+          else return true;
+        }
+        else return true;
+      }
+    }
+    else {
+      if (out_w <= 12) return true;
+      else return false;
     }
   }
 }
@@ -364,13 +426,13 @@ static bool check_cudnn_depthwise_workload_with_filter(
   auto out_elements = bs * ch * out_h * out_w;
   auto kernel_work = out_elements * filter * filter;
 
-  if (sm < 80) return check_cudnn_depthwise_workload_sm80<T>(
+  if (sm < 80) return check_cudnn_depthwise_workload_sm75<T>(
       stride, filter, w, ch, bs, h, out_h, out_w,
       out_elements, kernel_work);
   if (sm < 86) return check_cudnn_depthwise_workload_sm80<T>(
       stride, filter, w, ch, bs, h, out_h, out_w,
       out_elements, kernel_work);
-  if (sm < 89) return check_cudnn_depthwise_workload_sm89<T>(
+  if (sm < 89) return check_cudnn_depthwise_workload_sm86<T>(
       stride, filter, w, ch, bs, h, out_h, out_w,
       out_elements, kernel_work);
   if (sm < 90) return check_cudnn_depthwise_workload_sm89<T>(

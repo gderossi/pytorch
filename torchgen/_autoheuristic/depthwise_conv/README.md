@@ -33,27 +33,44 @@ training run that produced the current header.
 
 |SM group tree|Machine(s)|Device name(s)|SM|Train acc|Val acc|Test acc|
 |---|---|---|---|---:|---:|---:|
+|`sm75`|T4|Tesla T4|75|96.39%|93.60%|89.58%|
 |`sm80`|A100|NVIDIA A100-PCIE-40GB|80|93.75%|89.73%|88.89%|
+|`sm86`|A10|NVIDIA A10|86|96.47%|93.43%|90.29%|
 |`sm89`|L40|NVIDIA L40|89|90.33%|86.68%|88.50%|
 |`sm90`|H100|NVIDIA H100 80GB HBM3|90|93.04%|92.42%|88.50%|
 |`sm100`|GB200, GB300, Thor|NVIDIA GB200 / GB300 / Thor|100 / 103 / 110|87.68%|86.59%|85.68%|
 |`sm120`|RTX PRO 6000, Spark|NVIDIA RTX PRO 6000 Blackwell Server Edition / GB10|120 / 121|89.96%|87.24%|87.54%|
 
 Aggregate holdout numbers across all groups: overall validation accuracy
-87.89%, overall test accuracy 87.25%. On the test set the generated heuristic
-reaches a 1.935x mean speedup over the native kernel, versus 1.876x for
-always-cuDNN and 1.963x for an oracle that picks the faster kernel per shape
-(the heuristic is within ~1.5% of the oracle).
+89.01%, overall test accuracy 87.78%. On the test set, the regenerated
+heuristic disagrees with the legacy `check_cudnn_depthwise_workload` heuristic
+from `Convolution.cpp` on 530 rows. Excluding rows where both heuristics make
+the same decision, the regenerated heuristic is 1.159x faster than the legacy
+heuristic by total runtime. On just those disagreement rows, the legacy
+heuristic reaches a 0.916x speedup over the native kernel, the regenerated
+heuristic reaches 1.062x, and the oracle reaches 1.068x.
 
-All datasets were collected at PyTorch commit
-`5140876473ecc91ca14c695d8a40690f4c8919f3` with cuDNN frontend version 1.22.1
-(`12201`) and cuDNN backend version 9.23.0 (`92300`), on 2026-06-12 through
-2026-06-15.
+|Device|Disagreement rows|New vs legacy speedup|Legacy vs native speedup|New vs native speedup|Oracle vs native speedup|
+|---|---:|---:|---:|---:|---:|
+|A10|82|1.186x|0.891x|1.056x|1.059x|
+|A100|66|1.139x|1.000x|1.139x|1.143x|
+|GB200|34|1.021x|1.000x|1.021x|1.063x|
+|GB300|33|1.024x|1.000x|1.024x|1.064x|
+|H100|45|1.135x|0.895x|1.017x|1.020x|
+|L40|40|1.169x|0.968x|1.132x|1.140x|
+|RTX PRO 6000|50|1.210x|0.825x|0.998x|1.002x|
+|Spark|50|1.268x|0.789x|1.000x|1.001x|
+|T4|95|1.113x|0.947x|1.054x|1.055x|
+|Thor|35|1.144x|1.000x|1.144x|1.161x|
 
-The `sm75` (T4, RTX8000) and `sm86` (A10) groups are not generated because that
-hardware was not available when this dataset was collected. Runtime dispatch
-falls back to the nearest generated tree for those devices (`sm75` -> `sm80`,
-`sm86` -> `sm89`); see the SM grouping notes below.
+All datasets were collected with cuDNN frontend version 1.22.1 (`12201`) on
+2026-06-12 through 2026-06-30. Most datasets were collected at PyTorch commit
+`5140876473ecc91ca14c695d8a40690f4c8919f3` with cuDNN backend version 9.23.0
+(`92300`). The GB200 dataset was collected at commit
+`f4bdea026bdf3e86cf13216a83d6672b29ebc69e` with cuDNN backend version 9.23.0.
+The T4 and A10 datasets were collected at commit
+`c7407ac5c3d0ab1a5e1acc66d26de20c8719e828` with cuDNN backend version 9.24.0
+(`92400`).
 
 ## Heuristic generation
 To generate a new heuristic from benchmarking data, run the training script:
@@ -72,7 +89,9 @@ Validation and test files are not used to train the decision trees. They are
 used only to print holdout accuracy, confusion matrices, and aggregate policy
 metrics after the heuristic is generated. The policy metrics compare the
 generated heuristic against always using cuDNN and against an oracle that picks
-the faster measured implementation for each row.
+the faster measured implementation for each row. They also compare against the
+legacy depthwise heuristic from `Convolution.cpp`, excluding rows where the
+legacy heuristic and generated heuristic make the same decision.
 
 The generated trees use `bs`, `ch`, `h`, `w`, `filter`, `stride`, `out_h`,
 `out_w`, `out_elements`, and `kernel_work` as decision variables. Older

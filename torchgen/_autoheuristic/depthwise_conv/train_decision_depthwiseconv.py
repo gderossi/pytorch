@@ -292,7 +292,9 @@ class TrainDecisionTreeDepthwiseConv:
     def report_policy_metrics(self, input_files, tolerance, labels, predictions):
         dfs = []
         for input_file in input_files:
-            dfs.append(pd.read_csv(input_file))
+            df_file = pd.read_csv(input_file)
+            df_file["source_device"] = Path(input_file).parent.name
+            dfs.append(df_file)
         df = self.add_derived_features(pd.concat(dfs, ignore_index=True))
 
         speedup_values = df[self.target].values
@@ -308,12 +310,28 @@ class TrainDecisionTreeDepthwiseConv:
         if len(df) != len(predictions) or len(labels) != len(predictions):
             raise RuntimeError("Policy metric rows do not match predictions")
 
+        source_devices = df["source_device"].values
         native = df["time_all"].values
         cudnn = df["time_all_cudnn"].values
         chosen = np.where(predictions == 1, cudnn, native)
         oracle = np.minimum(native, cudnn)
         always_cudnn = cudnn
         slowdown = chosen / oracle
+        legacy_predictions = np.array(
+            [
+                self.legacy_check_cudnn_depthwise_workload_with_filter(
+                    h=row.h,
+                    w=row.w,
+                    ch=row.ch,
+                    bs=row.bs,
+                    filter=row.filter,
+                    stride=row.stride,
+                )
+                for row in df.itertuples(index=False)
+            ],
+            dtype=np.int64,
+        )
+        legacy_chosen = np.where(legacy_predictions == 1, cudnn, native)
 
         print(
             "  policy_metrics: "
@@ -323,6 +341,119 @@ class TrainDecisionTreeDepthwiseConv:
             f"total_slowdown_vs_oracle={chosen.sum() / oracle.sum():.4f}, "
             f"max_slowdown_vs_oracle={slowdown.max():.4f}"
         )
+        self.report_legacy_comparison(
+            native,
+            cudnn,
+            chosen,
+            legacy_chosen,
+            predictions,
+            legacy_predictions,
+            source_devices,
+        )
+
+    def legacy_check_cudnn_depthwise_workload_with_filter(
+        self, h, w, ch, bs, filter, stride
+    ):
+        if h == 1 and stride == 1:
+            return True
+
+        if filter not in (1, 3, 5):
+            return False
+        if w < 7:
+            return False
+        if stride == 1:
+            return True
+        if stride != 2:
+            return False
+
+        if bs == 1:
+            if filter == 1 and w <= 28:
+                return True
+            if filter == 3 or filter == 5:
+                return True
+        else:
+            if filter == 1 and bs <= 16 and ch >= 128 and w <= 7:
+                return True
+            if filter == 3 or filter == 5:
+                if ch >= 512 or (ch >= 256 and w >= 28):
+                    return True
+        return False
+
+    def report_legacy_comparison(
+        self,
+        native,
+        cudnn,
+        chosen,
+        legacy_chosen,
+        predictions,
+        legacy_predictions,
+        source_devices,
+    ):
+        disagreement = predictions != legacy_predictions
+        disagreement_count = int(disagreement.sum())
+        if disagreement_count == 0:
+            print("  legacy_policy_comparison: no decision differences")
+            return
+
+        def metrics(mask):
+            native_disagree = native[mask]
+            cudnn_disagree = cudnn[mask]
+            chosen_disagree = chosen[mask]
+            legacy_disagree = legacy_chosen[mask]
+            oracle_disagree = np.minimum(native_disagree, cudnn_disagree)
+            new_faster_count = int((chosen_disagree < legacy_disagree).sum())
+            legacy_faster_count = int((legacy_disagree < chosen_disagree).sum())
+            equal_count = int(mask.sum()) - new_faster_count - legacy_faster_count
+            return {
+                "disagreements": int(mask.sum()),
+                "new_total_speedup_vs_legacy": legacy_disagree.sum()
+                / chosen_disagree.sum(),
+                "legacy_total_speedup_vs_native": native_disagree.sum()
+                / legacy_disagree.sum(),
+                "new_total_speedup_vs_native": native_disagree.sum()
+                / chosen_disagree.sum(),
+                "oracle_total_speedup_vs_native": native_disagree.sum()
+                / oracle_disagree.sum(),
+                "new_faster_rows": new_faster_count,
+                "legacy_faster_rows": legacy_faster_count,
+                "equal_time_rows": equal_count,
+            }
+
+        aggregate = metrics(disagreement)
+        print(
+            "  legacy_policy_comparison: "
+            f"disagreements={aggregate['disagreements']}, "
+            "new_total_speedup_vs_legacy="
+            f"{aggregate['new_total_speedup_vs_legacy']:.4f}, "
+            "legacy_total_speedup_vs_native="
+            f"{aggregate['legacy_total_speedup_vs_native']:.4f}, "
+            "new_total_speedup_vs_native="
+            f"{aggregate['new_total_speedup_vs_native']:.4f}, "
+            "oracle_total_speedup_vs_native="
+            f"{aggregate['oracle_total_speedup_vs_native']:.4f}, "
+            f"new_faster_rows={aggregate['new_faster_rows']}, "
+            f"legacy_faster_rows={aggregate['legacy_faster_rows']}, "
+            f"equal_time_rows={aggregate['equal_time_rows']}"
+        )
+        print("  legacy_policy_comparison_by_device:")
+        for device in sorted(np.unique(source_devices[disagreement])):
+            device_mask = disagreement & (source_devices == device)
+            device_metrics = metrics(device_mask)
+            print(
+                f"    {device}: "
+                f"disagreements={device_metrics['disagreements']}, "
+                "new_total_speedup_vs_legacy="
+                f"{device_metrics['new_total_speedup_vs_legacy']:.4f}, "
+                "legacy_total_speedup_vs_native="
+                f"{device_metrics['legacy_total_speedup_vs_native']:.4f}, "
+                "new_total_speedup_vs_native="
+                f"{device_metrics['new_total_speedup_vs_native']:.4f}, "
+                "oracle_total_speedup_vs_native="
+                f"{device_metrics['oracle_total_speedup_vs_native']:.4f}, "
+                f"new_faster_rows={device_metrics['new_faster_rows']}, "
+                f"legacy_faster_rows={device_metrics['legacy_faster_rows']}, "
+                f"equal_time_rows={device_metrics['equal_time_rows']}"
+            )
 
     def is_leaf_node(self, tree, node_id):
         """Check if a node is a leaf node."""
