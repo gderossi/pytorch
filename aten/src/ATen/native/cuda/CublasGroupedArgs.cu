@@ -38,12 +38,20 @@ void check_cublaslt_grouped_alignment(
   } else if (a_is_2d && !b_is_2d) {
     TORCH_CHECK(
         m % alignment == 0 || !(transa == 't' && transb == 't'),
-        "cublasLt grouped GEMM with jagged M not aligned to 16 bytes does not support transa=t and transb=t, got M=",
+        "cublasLt grouped GEMM with jagged M not aligned to 16 bytes does not support transa=t and transb=t, got transa=",
+        transa,
+        " transb=",
+        transb,
+        " M=",
         m);
   } else if (!a_is_2d && b_is_2d) {
     TORCH_CHECK(
         n % alignment == 0 || !(transa == 'n' && transb == 'n'),
-        "cublasLt grouped GEMM with jagged N not aligned to 16 bytes does not support transa=n and transb=n, got N=",
+        "cublasLt grouped GEMM with jagged N not aligned to 16 bytes does not support transa=n and transb=n, got transa=",
+        transa,
+        " transb=",
+        transb,
+        " N=",
         n);
   } else {
     TORCH_CHECK(
@@ -106,7 +114,7 @@ __global__ void populate_cublas_grouped_args_kernel(
             (static_cast<int64_t>(delta) * b_offs_stride) % 16 == 0 &&
             "expected input tensor dynamic dimension byte size to be non-negative multiple of 16\n");
       }
-      if (m_is_delta && d_offs_stride != 0) {
+      if ((m_is_delta || n_is_delta) && d_offs_stride != 0) {
         CUDA_KERNEL_ASSERT(
             (static_cast<int64_t>(delta) * d_offs_stride) % 16 == 0 &&
             "expected output tensor dynamic dimension byte size to be non-negative multiple of 16\n");
