@@ -2,9 +2,38 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from typing import TYPE_CHECKING
+
 import torch
 
 from ... import cutedsl_utils as cu
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+
+_use_quack_sm120_grouped_mm = True
+
+
+def get_use_quack_sm120_grouped_mm() -> bool:
+    return _use_quack_sm120_grouped_mm
+
+
+def set_use_quack_sm120_grouped_mm(enabled: bool) -> None:
+    global _use_quack_sm120_grouped_mm
+    _use_quack_sm120_grouped_mm = enabled
+
+
+@contextmanager
+def use_quack_sm120_grouped_mm(enabled: bool = True) -> Iterator[None]:
+    old = get_use_quack_sm120_grouped_mm()
+    set_use_quack_sm120_grouped_mm(enabled)
+    try:
+        yield
+    finally:
+        set_use_quack_sm120_grouped_mm(old)
 
 
 def _same_cuda_device(*tensors: torch.Tensor | None) -> bool:
@@ -36,6 +65,8 @@ def _grouped_mm_sm120_cond(
     bias: torch.Tensor | None = None,
     out_dtype: torch.dtype | None = None,
 ) -> bool:
+    if not get_use_quack_sm120_grouped_mm():
+        return False
     if torch.version.hip is not None:
         return False
     if not _same_cuda_device(self, mat2, offs):
@@ -79,7 +110,8 @@ def _grouped_mm_sm120_impl(
 ) -> torch.Tensor:
     from torch._vendor.quack.grouped_gemm import grouped_mm_sm120_varlen_m
 
-    assert offs is not None
+    if offs is None:
+        raise RuntimeError("offs must be provided")
     zero = torch.zeros(1, dtype=torch.int32, device=offs.device)
     cu_seqlens_m = torch.cat((zero, offs))
     return grouped_mm_sm120_varlen_m(self, mat2, cu_seqlens_m)

@@ -3,7 +3,8 @@
 import unittest
 
 import torch
-import torch._native  # noqa: F401
+import torch._native
+from torch._native.ops import grouped_mm
 from torch.testing._internal.common_cuda import SM120OrLater, TEST_CUDA
 from torch.testing._internal.common_utils import (
     instantiate_parametrized_tests,
@@ -31,7 +32,9 @@ def _make_grouped_mm_inputs(dtype: torch.dtype):
     sizes = [128, 192, 160]
     mat_a = torch.randn(sum(sizes), 128, device="cuda", dtype=dtype)
     mat_b = torch.randn(len(sizes), 128, 128, device="cuda", dtype=dtype)
-    offs = torch.tensor(sizes, device="cuda", dtype=torch.int32).cumsum(0).to(torch.int32)
+    offs = (
+        torch.tensor(sizes, device="cuda", dtype=torch.int32).cumsum(0).to(torch.int32)
+    )
     return mat_a, mat_b, offs
 
 
@@ -44,6 +47,20 @@ class TestGroupedMm(TestCase):
         actual = torch._grouped_mm(mat_a, mat_b, offs=offs)
         expected = _reference_grouped_mm(mat_a, mat_b, offs)
 
+        atol = 2e-2 if dtype is torch.float16 else 2e-1
+        self.assertEqual(actual, expected, atol=atol, rtol=0)
+
+    @parametrize("dtype", (torch.float16, torch.bfloat16))
+    def test_sm120_varlen_m_grouped_mm_disable_quack(self, dtype):
+        mat_a, mat_b, offs = _make_grouped_mm_inputs(dtype)
+        self.assertTrue(grouped_mm.get_use_quack_sm120_grouped_mm())
+
+        with grouped_mm.use_quack_sm120_grouped_mm(False):
+            self.assertFalse(grouped_mm.get_use_quack_sm120_grouped_mm())
+            actual = torch._grouped_mm(mat_a, mat_b, offs=offs)
+
+        self.assertTrue(grouped_mm.get_use_quack_sm120_grouped_mm())
+        expected = _reference_grouped_mm(mat_a, mat_b, offs)
         atol = 2e-2 if dtype is torch.float16 else 2e-1
         self.assertEqual(actual, expected, atol=atol, rtol=0)
 
