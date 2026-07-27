@@ -720,7 +720,9 @@ static Tensor scaled_grouped_mm_cublaslt(
     bool use_fast_accum,
     int batchCount,
     ScalingType scaling_a,
-    ScalingType scaling_b) {
+    ScalingType scaling_b,
+    const std::optional<Tensor>& global_scale_a = std::nullopt,
+    const std::optional<Tensor>& global_scale_b = std::nullopt) {
 #if !defined(USE_ROCM) && defined(CUDA_VERSION) && CUDA_VERSION >= 13030
   check_cublaslt_grouped_scale_recipe(mat_a, scale_a, scaling_a, batchCount, /*is_a*/ true, "scale_a");
   check_cublaslt_grouped_scale_recipe(mat_b, scale_b, scaling_b, batchCount, /*is_a*/ false, "scale_b");
@@ -741,7 +743,9 @@ static Tensor scaled_grouped_mm_cublaslt(
       scale_b,
       std::nullopt,
       scaling_a,
-      scaling_b);
+      scaling_b,
+      global_scale_a,
+      global_scale_b);
   const at::cuda::blas::GroupedGemmScaleOptions scales{
       mat_b.scalar_type(),
       args.scale_mata_ptr,
@@ -985,10 +989,10 @@ _scaled_grouped_mm_cuda_v2(
 #if !defined(USE_ROCM) && defined(CUDA_VERSION) && CUDA_VERSION >= 13030
   const int64_t batchCount64 = (a_is_2d || b_is_2d)
       ? offs->size(0) : mat_a.size(0);
-  if (scale_a.size() == 1 &&
-      scale_b.size() == 1 &&
-      scale_recipe_a_enum.size() == 1 &&
-      scale_recipe_b_enum.size() == 1 &&
+  if (scale_a.size() >= 1 &&
+      scale_b.size() >= 1 &&
+      scale_recipe_a_enum.size() >= 1 &&
+      scale_recipe_b_enum.size() >= 1 &&
       should_use_scaled_cublaslt_grouped_gemm(
           mat_a,
           mat_b,
@@ -999,6 +1003,8 @@ _scaled_grouped_mm_cuda_v2(
           scale_recipe_a_enum[0],
           scale_recipe_b_enum[0],
           batchCount64)) {
+    const std::optional<Tensor>& global_scale_a = scale_a.size() >= 2 ? std::optional<Tensor>(scale_a[1]) : std::nullopt;
+    const std::optional<Tensor>& global_scale_b = scale_b.size() >= 2 ? std::optional<Tensor>(scale_b[1]) : std::nullopt;
     return scaled_grouped_mm_cublaslt(
         mat_a,
         mat_b,
@@ -1009,7 +1015,9 @@ _scaled_grouped_mm_cuda_v2(
         use_fast_accum,
         static_cast<int>(batchCount64),
         scale_recipe_a_enum[0],
-        scale_recipe_b_enum[0]);
+        scale_recipe_b_enum[0],
+	global_scale_a,
+	global_scale_b);
   }
 #endif
 
