@@ -165,6 +165,9 @@ std::optional<ScalingType> get_cublaslt_grouped_scaling_type(
   if (scale.scalar_type() == at::kFloat8_e8m0fnu) {
     return ScalingType::BlockWise1x32;
   }
+  if (scale.scalar_type() == at::kFloat8_e4m3fn) {
+    return ScalingType::BlockWise1x16;
+  }
   return std::nullopt;
 }
 
@@ -173,7 +176,8 @@ std::optional<ScalingType> get_cublaslt_grouped_scaling_type(
 bool is_cublaslt_grouped_scaling_type(ScalingType scaling) {
   return scaling == ScalingType::TensorWise ||
       scaling == ScalingType::GroupWise ||
-      scaling == ScalingType::BlockWise1x32;
+      scaling == ScalingType::BlockWise1x32 ||
+      scaling == ScalingType::BlockWise1x16;
 }
 
 // Needs to stay synced with get_cublaslt_grouped_scaling_type and
@@ -211,13 +215,12 @@ void check_cublaslt_grouped_scale_recipe(
         " elements for ",
         batchCount,
         " groups");
-  } else {
+  } else if (scaling == ScalingType::BlockWise1x32) {
     TORCH_CHECK(
-        scaling == ScalingType::BlockWise1x32 &&
         scale.scalar_type() == at::kFloat8_e8m0fnu &&
         scale.is_contiguous(),
         name,
-        " blockwise scale must be a contiguous float8_e8m0fnu tensor");
+        " MXFP8 blockwise scale must be a contiguous float8_e8m0fnu tensor");
     const int64_t inner = is_a ? mat.size(-1) : mat.size(-2);
     const int64_t outer = is_a ? mat.size(-2) : mat.size(-1);
     const int64_t scale_size = cublas_vec32_scale_size_host(inner, outer);
@@ -227,7 +230,7 @@ void check_cublaslt_grouped_scale_recipe(
           scale.size(0) == batchCount &&
           scale.size(1) == scale_size,
           name,
-          " blockwise scale for cuBLASLt grouped GEMM must have shape (",
+          " MXFP8 blockwise scale for cuBLASLt grouped GEMM must have shape (",
           batchCount,
           ", ",
           scale_size,
@@ -243,11 +246,18 @@ void check_cublaslt_grouped_scale_recipe(
       TORCH_CHECK(
           scale.numel() >= scale_size,
           name,
-          " blockwise scale for cuBLASLt grouped GEMM must have at least ",
+          " MXFP8 blockwise scale for cuBLASLt grouped GEMM must have at least ",
           scale_size,
           " elements, got ",
           scale.numel());
     }
+  } else {
+    TORCH_CHECK(
+        scaling == ScalingType::BlockWise1x16 &&
+	scale.scalar_type() == at::kFloat8_e4m3fn &&
+	scale.is_contiguous(),
+	name,
+	" NVFP4 blockwise scale must be a contiguous float8_e4m3fn tensor");
   }
 }
 
@@ -292,26 +302,38 @@ bool should_use_scaled_cublaslt_grouped_gemm(
         "; falling back to the non-cuBLASLt grouped GEMM path.");
     return false;
   }
-
-  const bool mat_a_is_fp8 =
-      mat_a.scalar_type() == at::kFloat8_e4m3fn ||
-      mat_a.scalar_type() == at::kFloat8_e5m2;
-  const bool mat_b_is_fp8 =
-      mat_b.scalar_type() == at::kFloat8_e4m3fn ||
-      mat_b.scalar_type() == at::kFloat8_e5m2;
-  const bool valid_in_dtypes =
-      mat_a_is_fp8 &&
-      mat_b_is_fp8 &&
-      (mat_a.scalar_type() == at::kFloat8_e4m3fn ||
-       mat_b.scalar_type() == at::kFloat8_e4m3fn);
-  if (!valid_in_dtypes) {
+  const bool mat_a_is_fp4 = mat_a.scalar_type() == at::kFloat4_e2m1fn_x2;
+  const bool mat_b_is_fp4 = mat_b.scalar_type() == at::kFloat4_e2m1fn_x2;
+  if (mat_a_is_fp4 != mat_b_is_fp4) {
     TORCH_WARN_ONCE(
-        "cuBLASLt scaled grouped GEMM is not used because inputs must both be FP8 and at least one input must be Float8_e4m3fn, got mat_a dtype ",
-        mat_a.scalar_type(),
-        " and mat_b dtype ",
-        mat_b.scalar_type(),
-        "; falling back to the non-cuBLASLt grouped GEMM path.");
+	"cuBLASLt NVFP4 scaled grouped GEMM is not used because inputs must both be FP4, got mat_a_dtype ",
+	mat_a.scalar_type(),
+	" and mat_b dtype ",
+	mat_b.scalar_type(),
+	"; falling back to the non-cuBLASLt grouped GEMM path.");
     return false;
+  }
+  if (!mat_a_is_fp4) {
+    const bool mat_a_is_fp8 =
+        mat_a.scalar_type() == at::kFloat8_e4m3fn ||
+        mat_a.scalar_type() == at::kFloat8_e5m2;
+    const bool mat_b_is_fp8 =
+        mat_b.scalar_type() == at::kFloat8_e4m3fn ||
+        mat_b.scalar_type() == at::kFloat8_e5m2;
+    const bool valid_fp8_dtypes =
+        mat_a_is_fp8 &&
+        mat_b_is_fp8 &&
+        (mat_a.scalar_type() == at::kFloat8_e4m3fn ||
+         mat_b.scalar_type() == at::kFloat8_e4m3fn);
+    if (!valid_fp8_dtypes) {
+      TORCH_WARN_ONCE(
+          "cuBLASLt scaled grouped GEMM is not used because inputs must both be FP8 and at least one input must be Float8_e4m3fn, got mat_a dtype ",
+          mat_a.scalar_type(),
+          " and mat_b dtype ",
+          mat_b.scalar_type(),
+          "; falling back to the non-cuBLASLt grouped GEMM path.");
+      return false;
+    }
   }
 
   const auto out_dtype = out_dtype_.value_or(at::kBFloat16);

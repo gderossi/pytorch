@@ -3064,12 +3064,13 @@ class TestFP8Matmul(TestCase):
         return A, B_T, scale_a, scale_b, global_scale_a, global_scale_b, A_hp, B_hp, offs
 
     @skipIfRocm
+    @onlyCUDA
     @unittest.skipIf(
         torch.cuda.get_device_capability()[0] not in [10, 11],
         "cublaslt grouped gemm requires SM 10.x or 11.0"
     )
     @parametrize("op", ["2d/2d", "2d/3d", "3d/2d", "3d/3d"])
-    @parametrize("out_dtype", [torch.bfloat16])
+    @parametrize("out_dtype", [torch.bfloat16, torch.float16, torch.float32])
     def test_scaled_grouped_gemm_cublaslt_nvfp4(self, op, out_dtype):
         (A, B_T, scale_a, scale_b, global_scale_a, global_scale_b,
          A_hp, B_hp, offs) = self.scaled_grouped_gemm_cublaslt_nvfp4_helper(op)
@@ -3097,6 +3098,7 @@ class TestFP8Matmul(TestCase):
         torch.testing.assert_close(C, C_ref, atol=8.0e-2, rtol=8.0e-2)
 
     @skipIfRocm
+    @onlyCUDA
     @unittest.skipIf(
         torch.cuda.get_device_capability()[0] not in [10, 11],
         "cublaslt grouped gemm requires SM 10.x or 11.0"
