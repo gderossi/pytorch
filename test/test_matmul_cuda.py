@@ -102,16 +102,6 @@ def rocm_group_gemm_ck_env(value):
 
 
 @contextlib.contextmanager
-def prefer_cublaslt_grouped_gemm():
-    old = torch.backends.cuda.matmul.prefer_cublaslt_grouped_gemm
-    try:
-        torch.backends.cuda.matmul.prefer_cublaslt_grouped_gemm = True
-        yield
-    finally:
-        torch.backends.cuda.matmul.prefer_cublaslt_grouped_gemm = old
-
-
-@contextlib.contextmanager
 def sm_carveout(value: int | None):
     torch._C._set_sm_carveout_experimental(value)
     try:
@@ -1027,13 +1017,11 @@ class TestMatmulCuda(InductorTestCase):
         A, B, offs, aligned = self.grouped_gemm_cublaslt_common(op, jagged_size, a_row_major, b_row_major, dtype)
         if not aligned:
             with self.assertRaisesRegex(RuntimeError, self.grouped_gemm_cublaslt_alignment_error(op)):
-                with prefer_cublaslt_grouped_gemm():
-                    torch._grouped_mm(A, B, offs=offs)
+                torch._grouped_mm(A, B, offs=offs)
             return
 
         C_ref = self.grouped_gemm_reference(A, B, offs)
-        with prefer_cublaslt_grouped_gemm():
-            C = torch._grouped_mm(A, B, offs=offs)
+        C = torch._grouped_mm(A, B, offs=offs)
         self.assertEqual(C, C_ref)
 
     @unittest.skipIf(TEST_WITH_ROCM, "ROCm doesn't support cuBLASLt grouped GEMM")
@@ -1052,14 +1040,12 @@ class TestMatmulCuda(InductorTestCase):
         A, B, offs, aligned = self.grouped_gemm_cublaslt_common(op, jagged_size, a_row_major, b_row_major, dtype)
         if not aligned:
             with self.assertRaisesRegex(RuntimeError, self.grouped_gemm_cublaslt_alignment_error(op)):
-                with prefer_cublaslt_grouped_gemm():
-                    f_ref(A, B, offs)
+                f_ref(A, B, offs)
             return
 
-        with prefer_cublaslt_grouped_gemm():
-            f = torch.compile(f_ref, fullgraph=True, mode=mode)
-            C_ref = f_ref(A, B, offs)
-            C = f(A, B, offs)
+        f = torch.compile(f_ref, fullgraph=True, mode=mode)
+        C_ref = f_ref(A, B, offs)
+        C = f(A, B, offs)
         self.assertEqual(C, C_ref)
 
     def test_grouped_gemm_doubly_non_contiguous(self):
@@ -1140,8 +1126,7 @@ class TestMatmulCuda(InductorTestCase):
         else:
             raise AssertionError(f"Invalid op: {op}")
 
-        with prefer_cublaslt_grouped_gemm():
-            C = torch._grouped_mm(A, B, offs=offs)
+        C = torch._grouped_mm(A, B, offs=offs)
         self.assertEqual(C, C_ref)
 
     @skipCUDAIfNotRocm

@@ -20404,16 +20404,6 @@ if RUN_GPU:
                 sm_major = torch.cuda.get_device_capability()[0]
                 if sm_major < 9 or sm_major >= 12:
                     self.skipTest("cublaslt grouped gemm requires SM 9.0-11.0")
-            prev = torch.backends.cuda.matmul.prefer_cublaslt_grouped_gemm
-            torch.backends.cuda.matmul.prefer_cublaslt_grouped_gemm = (
-                backend == "cublaslt"
-            )
-            self.addCleanup(
-                setattr,
-                torch.backends.cuda.matmul,
-                "prefer_cublaslt_grouped_gemm",
-                prev,
-            )
 
             @torch.compile(fullgraph=True)
             def f(a, b, offs, out_dtype):

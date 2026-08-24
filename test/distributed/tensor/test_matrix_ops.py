@@ -1081,15 +1081,6 @@ class DistMatrixOpsTest(DTensorTestBase):
         )
         offs = torch.tensor([16, 64], device=self.device_type, dtype=torch.int32)
 
-        prev = torch.backends.cuda.matmul.prefer_cublaslt_grouped_gemm
-        torch.backends.cuda.matmul.prefer_cublaslt_grouped_gemm = backend == "cublaslt"
-        self.addCleanup(
-            setattr,
-            torch.backends.cuda.matmul,
-            "prefer_cublaslt_grouped_gemm",
-            prev,
-        )
-
         h = F.grouped_mm(inp, w1, offs=offs)
         out = F.grouped_mm(h, w2, offs=offs)
 

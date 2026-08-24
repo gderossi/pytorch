@@ -111,8 +111,7 @@ bool should_use_cublaslt_grouped_gemm(
   if (fp16_grouped_gemm) {
     return true;
   }
-  return bf16_grouped_gemm &&
-      at::globalContext().preferCublasltGroupedGemm();
+  return bf16_grouped_gemm;
 }
 #endif
 
