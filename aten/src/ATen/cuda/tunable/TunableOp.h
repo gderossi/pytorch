@@ -24,6 +24,7 @@
 #ifndef USE_ROCM
 #include <mutex>
 #endif
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -122,9 +123,22 @@ class TunableOp {
       TuningContext* ctx = getTuningContext();
       if (ctx->IsTunableOpEnabled()) {
         auto& mgr = ctx->GetTuningResultsManager();
-        const auto& op_sig = Signature();
-        auto params_sig = params->Signature();
-        result = mgr.Lookup(op_sig, params_sig);
+        if (!ctx->IsTuningEnabled()) {
+          auto cached = LookupFast(params);
+          if (cached.has_value()) {
+            result = std::move(cached.value());
+          }
+        }
+        const std::string* op_sig = nullptr;
+        std::string params_sig;
+        if (result == ResultEntry::Null()) {
+          op_sig = &Signature();
+          params_sig = params->Signature();
+          result = mgr.Lookup(*op_sig, params_sig);
+          if (result != ResultEntry::Null()) {
+            StoreFast(params, result);
+          }
+        }
         // If there is not previous tuning result been found, we do the tuning iff tuning is enabled
         if (result == ResultEntry::Null()) {
           bool should_record_untuned = !ctx->IsTuningEnabled();
@@ -136,19 +150,20 @@ class TunableOp {
             if (!is_capturing) {
               RegisterOpCandidates(params);
               result = FindFastest(params);
-              mgr.Add(op_sig, params_sig, result);
+              mgr.Add(*op_sig, params_sig, result);
+              StoreFast(params, result);
             } else {
               should_record_untuned = true;
             }
 #else
             result = FindFastest(params);
-            mgr.Add(op_sig, params_sig, result);
+            mgr.Add(*op_sig, params_sig, result);
 #endif
           }
           if (should_record_untuned && ctx->IsRecordUntunedEnabled()) {
             // or record the gemm into file
             mgr.RecordUntuned(
-                ctx->GetUntunedFile(), op_sig, params_sig, params->BLASSignature());
+                ctx->GetUntunedFile(), *op_sig, params_sig, params->BLASSignature());
           }
         }
       }
@@ -220,6 +235,12 @@ class TunableOp {
     virtual std::vector<std::string> CandidateNames(const ParamsT* /*params*/) const {
       return OpNames();
     }
+
+    virtual std::optional<ResultEntry> LookupFast(const ParamsT* /*params*/) {
+      return std::nullopt;
+    }
+
+    virtual void StoreFast(const ParamsT* /*params*/, const ResultEntry& /*result*/) {}
 
 #ifndef USE_ROCM
     virtual bool RegisterOpForResult(

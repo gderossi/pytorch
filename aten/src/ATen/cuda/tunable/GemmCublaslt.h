@@ -1023,7 +1023,41 @@ template <typename AT, typename BT, typename CT, typename ParamsT>
 class CublasltScaledGemmTunableOp
     : public CublasltMatmulTunableOp<
           ParamsT,
-          CublasltScaledGemmProblemFactory<CT>> {};
+          CublasltScaledGemmProblemFactory<CT>> {
+ protected:
+  using CacheKey = typename ParamsT::CacheKey;
+
+  struct CacheKeyHash {
+    size_t operator()(const CacheKey& key) const {
+      size_t hash = 0;
+      for (const auto value : key) {
+        hash ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+      }
+      return hash;
+    }
+  };
+
+  std::optional<ResultEntry> LookupFast(const ParamsT* params) override {
+    std::scoped_lock l{fast_cache_lock_};
+    const auto it = fast_cache_.find(params->GetCacheKey());
+    if (it == fast_cache_.end()) {
+      return std::nullopt;
+    }
+    return it->second;
+  }
+
+  void StoreFast(const ParamsT* params, const ResultEntry& result) override {
+    if (result == ResultEntry::Null()) {
+      return;
+    }
+    std::scoped_lock l{fast_cache_lock_};
+    fast_cache_.try_emplace(params->GetCacheKey(), result);
+  }
+
+ private:
+  std::mutex fast_cache_lock_;
+  std::unordered_map<CacheKey, ResultEntry, CacheKeyHash> fast_cache_;
+};
 
 } // namespace at::cuda::tunable
 

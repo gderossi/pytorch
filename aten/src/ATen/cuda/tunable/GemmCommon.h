@@ -9,6 +9,7 @@
 //
 #pragma once
 
+#include <array>
 #include <string>
 #include <c10/core/ScalarType.h>
 
@@ -597,6 +598,32 @@ struct ScaledGemmParams : OpParams {
   ScaledGemmParams& operator=(const ScaledGemmParams&) = default;
   ScaledGemmParams& operator=(ScaledGemmParams&&) noexcept = default;
   ~ScaledGemmParams() override = default;
+
+  using CacheKey = std::array<int64_t, 19>;
+
+  CacheKey GetCacheKey() const {
+    return {
+        transa,
+        transb,
+        m,
+        n,
+        k,
+        lda,
+        ldb,
+        ldc,
+        static_cast<int64_t>(a_dtype),
+        static_cast<int64_t>(b_dtype),
+        static_cast<int64_t>(c_dtype),
+        static_cast<int64_t>(a_scale_dtype),
+        static_cast<int64_t>(b_scale_dtype),
+        static_cast<int64_t>(a_scaling_type),
+        static_cast<int64_t>(b_scaling_type),
+        c_scale_ptr != nullptr,
+        use_fast_accum,
+        bias_ptr != nullptr,
+        static_cast<int64_t>(bias_dtype),
+    };
+  }
 
   std::string BLASSignature() const override {
     // Excluding use_fast_accum and use_rowise booleans for now
