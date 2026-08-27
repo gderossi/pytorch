@@ -254,8 +254,10 @@ class GemmTunableOp
     this->RegisterOp(std::string("Default"), std::make_unique<DefaultGemmOp<T>>());
   }
 
-  std::string Signature() override {
-    return fmt::sprintf("GemmTunableOp_%s_%c%c", TypeName<T>(T{}), BlasOpToString(ALayout), BlasOpToString(BLayout));
+  const std::string& Signature() override {
+    static const std::string signature = fmt::sprintf(
+        "GemmTunableOp_%s_%c%c", TypeName<T>(T{}), BlasOpToString(ALayout), BlasOpToString(BLayout));
+    return signature;
   }
 };
 
@@ -289,8 +291,10 @@ class GemmAndBiasTunableOp
     this->RegisterOp(std::string("Default"), std::make_unique<DefaultGemmAndBiasOp<T>>());
   }
 
-  std::string Signature() override {
-    return fmt::sprintf("GemmAndBiasTunableOp_%s_%c%c", TypeName<T>(T{}), BlasOpToString(ALayout), BlasOpToString(BLayout));
+  const std::string& Signature() override {
+    static const std::string signature = fmt::sprintf(
+        "GemmAndBiasTunableOp_%s_%c%c", TypeName<T>(T{}), BlasOpToString(ALayout), BlasOpToString(BLayout));
+    return signature;
   }
 };
 
@@ -331,8 +335,10 @@ class GemmStridedBatchedTunableOp
     this->RegisterOp(std::string("Default"), std::make_unique<DefaultGemmStridedBatchedOp<T>>());
   }
 
-  std::string Signature() override {
-    return fmt::sprintf("GemmStridedBatchedTunableOp_%s_%c%c", TypeName<T>(T{}), BlasOpToString(ALayout), BlasOpToString(BLayout));
+  const std::string& Signature() override {
+    static const std::string signature = fmt::sprintf(
+        "GemmStridedBatchedTunableOp_%s_%c%c", TypeName<T>(T{}), BlasOpToString(ALayout), BlasOpToString(BLayout));
+    return signature;
   }
 };
 
@@ -358,12 +364,14 @@ class ScaledGemmTunableOp
     this->RegisterOp(std::string("Default"), std::make_unique<DefaultScaledGemmOp<CT>>());
   }
 
-  std::string Signature() override {
-    return fmt::sprintf("ScaledGemmTunableOp_%s_%s_%s_%c%c",
-      TypeName<AT>(AT{}),
-      TypeName<BT>(BT{}),
-      TypeName<CT>(CT{}),
-      BlasOpToString(ALayout), BlasOpToString(BLayout));
+  const std::string& Signature() override {
+    static const std::string signature = fmt::sprintf(
+        "ScaledGemmTunableOp_%s_%s_%s_%c%c",
+        TypeName<AT>(AT{}),
+        TypeName<BT>(BT{}),
+        TypeName<CT>(CT{}),
+        BlasOpToString(ALayout), BlasOpToString(BLayout));
+    return signature;
   }
 };
 

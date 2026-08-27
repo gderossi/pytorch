@@ -122,7 +122,7 @@ class TunableOp {
       TuningContext* ctx = getTuningContext();
       if (ctx->IsTunableOpEnabled()) {
         auto& mgr = ctx->GetTuningResultsManager();
-        auto op_sig = Signature();
+        const auto& op_sig = Signature();
         auto params_sig = params->Signature();
         result = mgr.Lookup(op_sig, params_sig);
         // If there is not previous tuning result been found, we do the tuning iff tuning is enabled
@@ -174,7 +174,7 @@ class TunableOp {
       return op->Call(params);
     }
 
-    virtual std::string Signature() {
+    virtual const std::string& Signature() {
       // According to C++17 standard https://wg21.link/n4659 section 15.7.4
       // > if the operand of typeid refers to the
       // > object under construction or destruction, typeid yields the std::type_info object representing the constructor
@@ -292,7 +292,7 @@ class TunableOp {
   protected:
     virtual ResultEntry FindFastest(const ParamsT* params) {
       TuningContext* ctx = getTuningContext();
-      auto op_sig = Signature();
+      const auto& op_sig = Signature();
       auto params_sig = params->Signature();
       auto blas_sig = params->BLASSignature();
       auto candidate_names = CandidateNames(params);
