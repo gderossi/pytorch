@@ -83,6 +83,28 @@ def _lc_ag_output_shape(shape: tuple[int, ...], world_size: int) -> tuple[int, .
     return (shape[0] * world_size, *shape[1:])
 
 
+# The classic "nccl" backend feeds the native NCCL FlightRecorder; every other
+# CUDA backend records into the generic per-backend recorder keyed by its name.
+def _reset_rendezvous_fr(backend_name: str) -> None:
+    D = torch._C._distributed_c10d
+    if backend_name == "nccl":
+        D._reset_fr_recording_nccl()
+    else:
+        D._reset_fr_trace(backend=backend_name)
+
+
+def _dump_rendezvous_fr(backend_name: str) -> list:
+    import pickle
+
+    D = torch._C._distributed_c10d
+    blob = (
+        D._dump_nccl_trace()
+        if backend_name == "nccl"
+        else D._dump_fr_trace(backend=backend_name)
+    )
+    return pickle.loads(blob)["entries"]
+
+
 # So that tests are written in device-agnostic way
 device_type = "cuda"
 device_module = torch.get_device_module(device_type)
@@ -352,14 +374,16 @@ class SymmetricMemoryTest(MultiProcContinuousTest):
     @skip_if_lt_x_gpu(2)
     @skip_if_rocm_ver_atleast_multiprocess([7, 14])
     def test_rendezvous_via_pg_allgather(self) -> None:
-        import pickle
-
         self._init_process()
 
         pg = dist.group.WORLD
         pg.use_pg_for_symm_mem_rendezvous = True
         try:
-            torch._C._distributed_c10d._reset_fr_recording_nccl()
+            # The classic "nccl" backend self-records into the native NCCL
+            # FlightRecorder, but other CUDA backends record into the generic
+            # per-backend FlightRecorder. Read whichever recorder is actually used.
+            fr_backend = pg._get_backend(self.device).name()
+            _reset_rendezvous_fr(fr_backend)
 
             t = symm_mem.empty(64, dtype=torch.float32, device=self.device).fill_(
                 self.rank
@@ -369,13 +393,15 @@ class SymmetricMemoryTest(MultiProcContinuousTest):
             self.assertEqual(symm_mem_hdl.rank, self.rank)
             self.assertEqual(symm_mem_hdl.world_size, self.world_size)
 
-            entries = pickle.loads(torch._C._distributed_c10d._dump_nccl_trace())[
-                "entries"
-            ]
+            entries = _dump_rendezvous_fr(fr_backend)
             ag_entries = [
-                e for e in entries if e["profiling_name"] == "nccl:_all_gather_base"
+                e
+                for e in entries
+                if e["profiling_name"] == f"{fr_backend}:_all_gather_base"
             ]
-            bc_entries = [e for e in entries if e["profiling_name"] == "nccl:broadcast"]
+            bc_entries = [
+                e for e in entries if e["profiling_name"] == f"{fr_backend}:broadcast"
+            ]
             has_mc = symm_mem_hdl.multicast_ptr != 0
             # Exchanges routed through the PG: the RendezvousRequest allgather
             # (always), the handle exchange allgather (NVLink-fabric hardware
