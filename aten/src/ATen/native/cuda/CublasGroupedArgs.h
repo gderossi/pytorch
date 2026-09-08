@@ -2,6 +2,7 @@
 
 #include <ATen/BlasBackend.h>
 #include <ATen/core/Tensor.h>
+#include <ATen/native/cuda/CublasGroupedScaleUtils.cuh>
 #include <c10/core/ScalarType.h>
 #include <optional>
 
@@ -23,8 +24,8 @@ struct cublasGroupedArgs {
       const std::optional<Tensor>& scale_a = std::nullopt,
       const std::optional<Tensor>& scale_b = std::nullopt,
       const std::optional<Tensor>& scale_result = std::nullopt,
-      const std::optional<at::blas::ScalingType>& scaling_choice_a = std::nullopt,
-      const std::optional<at::blas::ScalingType>& scaling_choice_b = std::nullopt);
+      const std::optional<CublasGroupedScaleLayout>& scale_layout_a = std::nullopt,
+      const std::optional<CublasGroupedScaleLayout>& scale_layout_b = std::nullopt);
 
   // In grouped GEMM, m/n/k are the cuBLASLt heuristic averages. The actual
   // per-group dimensions live in mArray, nArray, and kArray.
@@ -57,10 +58,6 @@ struct cublasGroupedArgs {
   void* scale_mata_ptr = nullptr;
   void* scale_matb_ptr = nullptr;
   void* scale_result_ptr = nullptr;
-  at::blas::ScalingType scale_mata_scaling_type = at::blas::ScalingType::TensorWise;
-  at::blas::ScalingType scale_matb_scaling_type = at::blas::ScalingType::TensorWise;
-  c10::ScalarType scale_mata_dtype = c10::ScalarType::Float;
-  c10::ScalarType scale_matb_dtype = c10::ScalarType::Float;
 };
 #endif // !defined(USE_ROCM) && defined(CUDA_VERSION) && CUDA_VERSION >= 13030
 

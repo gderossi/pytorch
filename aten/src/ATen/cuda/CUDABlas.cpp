@@ -2280,18 +2280,10 @@ void grouped_gemm(
   computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_ALPHA_BATCH_STRIDE, alphaBatchStride);
   computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_BETA_BATCH_STRIDE, betaBatchStride);
   if (scaled) {
-    const int a_scale_mode = detail::cublasLtMatmulScaleMode(
-        scales->a_scaling_type,
-        scales->A_scale_dtype,
-        scales->use_fast_accum);
-    const int b_scale_mode = detail::cublasLtMatmulScaleMode(
-        scales->b_scaling_type,
-        scales->B_scale_dtype,
-        scales->use_fast_accum);
     computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, scales->A_scale_ptr);
     computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, scales->B_scale_ptr);
-    computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_A_SCALE_MODE, a_scale_mode);
-    computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_B_SCALE_MODE, b_scale_mode);
+    computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_A_SCALE_MODE, scales->A_scale_mode);
+    computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_B_SCALE_MODE, scales->B_scale_mode);
     if (scales->D_scale_ptr != nullptr) {
       // TODO: When D scaling support is added, update this and GroupedGemmScaleOptions to set D scale mode)
       computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_D_SCALE_POINTER, scales->D_scale_ptr);

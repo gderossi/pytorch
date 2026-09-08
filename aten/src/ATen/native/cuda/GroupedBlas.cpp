@@ -122,13 +122,33 @@ bool should_use_cublaslt_grouped_gemm(
 }
 
 #if defined(CUDA_VERSION) && CUDA_VERSION >= 13040
-int64_t cublas_vec32_scale_size_host(int64_t inner, int64_t outer) {
-  constexpr int64_t BLOCK_ROWS = 128;
-  constexpr int64_t BLOCK_COLS = 128;
-  constexpr int64_t S_VSCALE = 32;
-  int64_t s_rows = ((inner + BLOCK_ROWS - 1) / BLOCK_ROWS) * (BLOCK_ROWS / S_VSCALE);
-  int64_t s_cols = ((outer + BLOCK_COLS - 1) / BLOCK_COLS) * BLOCK_COLS;
-  return s_rows * s_cols;
+struct CublasLtGroupedScaleConfig {
+  int mode;
+  CublasGroupedScaleLayout layout;
+};
+
+CublasLtGroupedScaleConfig resolve_cublaslt_grouped_scale_config(
+    ScalingType scaling,
+    ScalarType scale_dtype,
+    bool use_fast_accum) {
+  CublasGroupedScaleLayout layout;
+  switch (scaling) {
+    case ScalingType::TensorWise:
+      layout = CublasGroupedScaleLayout::Scalar;
+      break;
+    case ScalingType::GroupWise:
+      layout = CublasGroupedScaleLayout::PerBatchScalar;
+      break;
+    case ScalingType::BlockWise1x32:
+      layout = CublasGroupedScaleLayout::Vec32UE8M0;
+      break;
+    default:
+      TORCH_CHECK(false, "unsupported cuBLASLt grouped scale recipe");
+  }
+  return {
+      at::cuda::blas::detail::cublasLtMatmulScaleMode(
+          scaling, scale_dtype, use_fast_accum),
+      layout};
 }
 
 // Needs to stay synced with is_cublaslt_grouped_scaling_type and
@@ -202,7 +222,8 @@ void check_cublaslt_grouped_scale_recipe(
         " blockwise scale must be a contiguous float8_e8m0fnu tensor");
     const int64_t inner = is_a ? mat.size(-1) : mat.size(-2);
     const int64_t outer = is_a ? mat.size(-2) : mat.size(-1);
-    const int64_t scale_size = cublas_vec32_scale_size_host(inner, outer);
+    const int64_t scale_size = cublas_grouped_scale_size_bytes(
+        CublasGroupedScaleLayout::Vec32UE8M0, inner, outer);
     if (mat.dim() == 3) {
       TORCH_CHECK(
           scale.dim() == 2 &&
@@ -709,6 +730,10 @@ static void scaled_grouped_mm_cublaslt(
     Tensor& out) {
   check_cublaslt_grouped_scale_recipe(mat_a, scale_a, scaling_a, batchCount, /*is_a*/ true, "scale_a");
   check_cublaslt_grouped_scale_recipe(mat_b, scale_b, scaling_b, batchCount, /*is_a*/ false, "scale_b");
+  const auto scale_config_a = resolve_cublaslt_grouped_scale_config(
+      scaling_a, scale_a.scalar_type(), use_fast_accum);
+  const auto scale_config_b = resolve_cublaslt_grouped_scale_config(
+      scaling_b, scale_b.scalar_type(), use_fast_accum);
 
   const bool needs_int64 = cublaslt_grouped_mm_use_int64(mat_a, mat_b, out);
 
@@ -722,18 +747,16 @@ static void scaled_grouped_mm_cublaslt(
       scale_a,
       scale_b,
       std::nullopt,
-      scaling_a,
-      scaling_b);
+      scale_config_a.layout,
+      scale_config_b.layout);
   const at::cuda::blas::GroupedGemmScaleOptions scales{
       mat_b.scalar_type(),
       args.scale_mata_ptr,
       args.scale_matb_ptr,
       args.scale_result_ptr,
       use_fast_accum,
-      args.scale_mata_dtype,
-      args.scale_matb_dtype,
-      args.scale_mata_scaling_type,
-      args.scale_matb_scaling_type};
+      scale_config_a.mode,
+      scale_config_b.mode};
   at::cuda::blas::grouped_gemm(
       args.transa, args.transb,
       args.mArray, args.m,

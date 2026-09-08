@@ -185,10 +185,8 @@ struct GroupedGemmScaleOptions {
   const void* B_scale_ptr;
   const void* D_scale_ptr;
   bool use_fast_accum;
-  ScalarType A_scale_dtype;
-  ScalarType B_scale_dtype;
-  at::blas::ScalingType a_scaling_type;
-  at::blas::ScalingType b_scaling_type;
+  int A_scale_mode;
+  int B_scale_mode;
 };
 
 void grouped_gemm(
