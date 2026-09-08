@@ -67,17 +67,6 @@ void check_cublaslt_grouped_alignment(
   }
 }
 
-// cuBLAS VEC32_UE8M0 scale tensor size (bytes, since e8m0 is 1 byte each).
-// Mirrors getScaleTensorSize() from the cuBLAS samples.
-__device__ __forceinline__ int64_t cublas_vec32_scale_size(int inner, int outer) {
-  const int BLOCK_ROWS = 128; // S_BLOCK_INNER(4) * S_VSCALE(32)
-  const int BLOCK_COLS = 128; // S_BLOCK_COLS(32) * S_BLOCK_ROWS(4)
-  const int S_VSCALE = 32;
-  int64_t s_rows = ((inner + BLOCK_ROWS - 1) / BLOCK_ROWS) * (BLOCK_ROWS / S_VSCALE);
-  int64_t s_cols = ((outer + BLOCK_COLS - 1) / BLOCK_COLS) * BLOCK_COLS;
-  return s_rows * s_cols;
-}
-
 template <typename IndexType>
 __global__ void populate_cublas_grouped_args_kernel(
     const int32_t* __restrict__ offs,
@@ -95,6 +84,8 @@ __global__ void populate_cublas_grouped_args_kernel(
     float* __restrict__ alpha_ptr, float* __restrict__ beta_ptr,
     int64_t base_scale_a, int64_t base_scale_b,
     int64_t scale_a_stride_bytes, int64_t scale_b_stride_bytes,
+    CublasGroupedScaleLayout scale_layout_a,
+    CublasGroupedScaleLayout scale_layout_b,
     int32_t scale_inner, int32_t scale_a_outer, int32_t scale_b_outer,
     int64_t* __restrict__ scalePtrA_out, int64_t* __restrict__ scalePtrB_out) {
   int i = threadIdx.x;
@@ -170,8 +161,12 @@ __global__ void populate_cublas_grouped_args_kernel(
     const int32_t inner_b = scale_inner ? scale_inner : delta;
     const int32_t outer_a = scale_a_outer ? scale_a_outer : delta;
     const int32_t outer_b = scale_b_outer ? scale_b_outer : delta;
-    const int64_t size_a = scan_a ? cublas_vec32_scale_size(inner_a, outer_a) : 0;
-    const int64_t size_b = scan_b ? cublas_vec32_scale_size(inner_b, outer_b) : 0;
+    const int64_t size_a = scan_a
+        ? cublas_grouped_scale_size_bytes(scale_layout_a, inner_a, outer_a)
+        : 0;
+    const int64_t size_b = scan_b
+        ? cublas_grouped_scale_size_bytes(scale_layout_b, inner_b, outer_b)
+        : 0;
     s_a[i] = size_a;
     s_b[i] = size_b;
     __syncthreads();
@@ -223,6 +218,8 @@ void launch_populate_cublas_grouped_args(
     int64_t d_offs_stride, int64_t d_idx_stride,
     int64_t base_scale_a, int64_t base_scale_b,
     int64_t scale_a_stride_bytes, int64_t scale_b_stride_bytes,
+    CublasGroupedScaleLayout scale_layout_a,
+    CublasGroupedScaleLayout scale_layout_b,
     int32_t scale_inner, int32_t scale_a_outer, int32_t scale_b_outer,
     int64_t* scalePtrA_out, int64_t* scalePtrB_out,
     cudaStream_t stream) {
@@ -264,6 +261,7 @@ void launch_populate_cublas_grouped_args(
       args.alphaScalar, args.betaScalar,
       base_scale_a, base_scale_b,
       scale_a_stride_bytes, scale_b_stride_bytes,
+      scale_layout_a, scale_layout_b,
       scale_inner, scale_a_outer, scale_b_outer,
       scalePtrA_out, scalePtrB_out);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
@@ -281,8 +279,8 @@ cublasGroupedArgs::cublasGroupedArgs(
     const std::optional<Tensor>& scale_a,
     const std::optional<Tensor>& scale_b,
     const std::optional<Tensor>& scale_result,
-    const std::optional<at::blas::ScalingType>& scaling_choice_a,
-    const std::optional<at::blas::ScalingType>& scaling_choice_b) {
+    const std::optional<CublasGroupedScaleLayout>& scale_layout_a,
+    const std::optional<CublasGroupedScaleLayout>& scale_layout_b) {
   const bool a_is_2d = mat1.dim() == 2;
   const bool b_is_2d = mat2.dim() == 2;
   if (a_is_2d || b_is_2d) {
@@ -308,27 +306,19 @@ cublasGroupedArgs::cublasGroupedArgs(
   if (scale_a && scale_b) {
     scale_mata_ptr = scale_a->data_ptr();
     scale_matb_ptr = scale_b->data_ptr();
-    scale_mata_dtype = scale_a->scalar_type();
-    scale_matb_dtype = scale_b->scalar_type();
 
-    TORCH_CHECK(scaling_choice_a.has_value() && scaling_choice_b.has_value(),
-        "Scaling choice must be provided when scale tensors are provided");
-    scale_mata_scaling_type = scaling_choice_a.value();
-    scale_matb_scaling_type = scaling_choice_b.value();
+    TORCH_CHECK(
+        scale_layout_a.has_value() && scale_layout_b.has_value(),
+        "Scale layout must be provided when scale tensors are provided");
   }
   if (scale_result) {
     scale_result_ptr = scale_result->data_ptr();
   }
 
-  // GroupWise and BlockWise1x32 scales need device-side pointer arrays
-  // (one pointer per group) because cuBLAS expects the scale pointer to
-  // be an array of device pointers for grouped GEMM.
-  auto needs_ptr_array = [](at::blas::ScalingType st) {
-    return st == at::blas::ScalingType::GroupWise
-        || st == at::blas::ScalingType::BlockWise1x32;
-  };
-  const bool mata_needs_ptr = needs_ptr_array(scale_mata_scaling_type);
-  const bool matb_needs_ptr = needs_ptr_array(scale_matb_scaling_type);
+  const auto mata_layout = scale_layout_a.value_or(CublasGroupedScaleLayout::Scalar);
+  const auto matb_layout = scale_layout_b.value_or(CublasGroupedScaleLayout::Scalar);
+  const bool mata_needs_ptr = scale_a && cublas_grouped_scale_uses_pointer_array(mata_layout);
+  const bool matb_needs_ptr = scale_b && cublas_grouped_scale_uses_pointer_array(matb_layout);
 
   // Determine per-case which dimensions are variable (delta-based)
   // and how pointer strides work
@@ -406,22 +396,21 @@ cublasGroupedArgs::cublasGroupedArgs(
   int64_t* scaleAPtrArray = nullptr;
   int64_t* scaleBPtrArray = nullptr;
   if (mata_needs_ptr) {
-    scaleAPtrArray = reinterpret_cast<int64_t*>(buf.data_ptr() + offset);
+    scaleAPtrArray = reinterpret_cast<int64_t*>(buf.data_ptr<uint8_t>() + offset);
     offset += batchCount * sizeof(int64_t);
   }
   if (matb_needs_ptr) {
-    scaleBPtrArray = reinterpret_cast<int64_t*>(buf.data_ptr() + offset);
+    scaleBPtrArray = reinterpret_cast<int64_t*>(buf.data_ptr<uint8_t>() + offset);
   }
 
   const int64_t base_scale_a = scale_a ? reinterpret_cast<int64_t>(scale_a->data_ptr()) : 0;
   const int64_t base_scale_b = scale_b ? reinterpret_cast<int64_t>(scale_b->data_ptr()) : 0;
 
   // Byte stride between consecutive groups' scale data.
-  // For GroupWise (1D float): stride(0)*elem_size
-  // For BlockWise1x32 3D/3D: stride(0)*elem_size
-  // For BlockWise1x32 with jagged dims: 0 signals variable-size mode
-  const bool mata_blockwise = scale_mata_scaling_type == at::blas::ScalingType::BlockWise1x32;
-  const bool matb_blockwise = scale_matb_scaling_type == at::blas::ScalingType::BlockWise1x32;
+  // For per-batch scalars and 3D block scales, stride(0) selects a group.
+  // For a blockwise 2D scale, 0 signals variable-size mode.
+  const bool mata_blockwise = cublas_grouped_scale_is_blockwise(mata_layout);
+  const bool matb_blockwise = cublas_grouped_scale_is_blockwise(matb_layout);
   const bool blockwise_variable_a = mata_blockwise && a_is_2d;
   const bool blockwise_variable_b = matb_blockwise && b_is_2d;
   const int64_t scale_a_stride_bytes = (scale_a && !blockwise_variable_a)
@@ -473,6 +462,7 @@ cublasGroupedArgs::cublasGroupedArgs(
       d_offs_stride, d_idx_stride,
       base_scale_a, base_scale_b,
       scale_a_stride_bytes, scale_b_stride_bytes,
+      mata_layout, matb_layout,
       scale_inner, scale_a_outer, scale_b_outer,
       scaleAPtrArray, scaleBPtrArray,
       stream);
