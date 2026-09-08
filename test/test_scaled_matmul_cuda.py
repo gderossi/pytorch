@@ -2971,6 +2971,45 @@ class TestFP8Matmul(TestCase):
             scale_b = scale_b.reshape(-1, k // block_size)
         return A, B_T, scale_a, scale_b, offs
 
+    def scaled_grouped_gemm_cublaslt_nvfp4_helper(self, op, device):
+        ngroups = 3
+        m, n, k = 128, 128, 128
+
+        if op == "2d/2d":
+            offs = torch.arange(k, (ngroups + 1) * k, k, device=device, dtype=torch.int32)
+            a_groups = [torch.ones((m, k), device=device, dtype=torch.bfloat16) for _ in range(ngroups)]
+            b_groups = [torch.ones((n, k), device=device, dtype=torch.bfloat16) for _ in range(ngroups)]
+            a_cat, b_cat = 1, 1
+        elif op == "2d/3d":
+            offs = torch.arange(m, (ngroups + 1) * m, m, device=device, dtype=torch.int32)
+            a_groups = [torch.ones((m, k), device=device, dtype=torch.bfloat16) for _ in range(ngroups)]
+            b_groups = [torch.ones((n, k), device=device, dtype=torch.bfloat16) for _ in range(ngroups)]
+            a_cat, b_cat = 0, None
+        elif op == "3d/2d":
+            offs = torch.arange(n, (ngroups + 1) * n, n, device=device, dtype=torch.int32)
+            a_groups = [torch.ones((m, k), device=device, dtype=torch.bfloat16) for _ in range(ngroups)]
+            b_groups = [torch.ones((n, k), device=device, dtype=torch.bfloat16) for _ in range(ngroups)]
+            a_cat, b_cat = None, 0
+        elif op == "3d/3d":
+            offs = None
+            a_groups = [torch.ones((m, k), device=device, dtype=torch.bfloat16) for _ in range(ngroups)]
+            b_groups = [torch.ones((n, k), device=device, dtype=torch.bfloat16) for _ in range(ngroups)]
+
+            a_cat, b_cat = None, None
+        else:
+            raise ValueError(f"unsupported grouped GEMM layout: {op}")
+
+        a_fp4 = [_bfloat16_to_float4_e2m1fn_x2(x) for x in a_groups]
+        b_fp4 = [_bfloat16_to_float4_e2m1fn_x2(x) for x in b_groups]
+        a_scale = to_blocked(torch.ones((m, k // 16), device=device, dtype=torch.float8_e4m3fn))
+        b_scale = to_blocked(torch.ones((n, k // 16), device=device, dtype=torch.float8_e4m3fn))
+
+        A = (torch.stack(a_fp4) if a_cat is None else torch.cat(a_fp4, dim=a_cat)).contiguous()
+        B_T = (torch.stack(b_fp4) if b_cat is None else torch.cat(b_fp4, dim=b_cat)).contiguous()
+        scale_a = torch.stack([a_scale] * ngroups) if a_cat is None else torch.cat([a_scale] * ngroups)
+        scale_b = torch.stack([b_scale] * ngroups) if b_cat is None else torch.cat([b_scale] * ngroups)
+        return A, B_T, scale_a, scale_b, offs
+
     @onlyCUDA
     @skipIfRocm
     @unittest.skipIf(
@@ -3029,6 +3068,45 @@ class TestFP8Matmul(TestCase):
             offs=offs, use_fast_accum=fast_accum, out_dtype=out_dtype,
         )
         self.assertEqual(C, C_ref)
+
+    @onlyCUDA
+    @skipIfRocm
+    @unittest.skipIf(
+        not (
+            PLATFORM_SUPPORTS_CUBLASLT_FP8_GROUPED_GEMM
+            and PLATFORM_SUPPORTS_MX_GEMM
+        ),
+        cublaslt_grouped_mm_skip_msg
+    )
+    @parametrize("op", ["2d/2d", "2d/3d", "3d/2d", "3d/3d"])
+    @parametrize("two_level", [False, True])
+    def test_scaled_grouped_gemm_cublaslt_nvfp4(self, op, two_level, device):
+        A, B_T, block_scale_a, block_scale_b, offs = (
+            self.scaled_grouped_gemm_cublaslt_nvfp4_helper(op, device)
+        )
+        scale_a = block_scale_a
+        scale_b = block_scale_b
+        recipe_a = ScalingType.BlockWise1x16
+        recipe_b = ScalingType.BlockWise1x16
+        expected_scale = 1
+        if two_level:
+            scale_a = [block_scale_a, torch.tensor([2.0], device=device)]
+            scale_b = [block_scale_b, torch.tensor([3.0], device=device)]
+            recipe_a = [ScalingType.BlockWise1x16, ScalingType.TensorWise]
+            recipe_b = [ScalingType.BlockWise1x16, ScalingType.TensorWise]
+            expected_scale = 6
+
+        C = scaled_grouped_mm_wrap(
+            A,
+            B_T.transpose(-2, -1),
+            scale_a,
+            scale_b,
+            recipe_a,
+            recipe_b,
+            offs=offs,
+        )
+
+        self.assertEqual(C, torch.full_like(C, 128 * expected_scale))
 
 
     @onlyCUDA
