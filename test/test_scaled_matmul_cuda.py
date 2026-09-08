@@ -3010,6 +3010,45 @@ class TestFP8Matmul(TestCase):
         scale_b = torch.stack([b_scale] * ngroups) if b_cat is None else torch.cat([b_scale] * ngroups)
         return A, B_T, scale_a, scale_b, offs
 
+    def scaled_grouped_gemm_cublaslt_hopper_scale_helper(self, op, recipe_a, recipe_b, device):
+        ngroups = 3
+        m, n, k = 128, 128, 128
+
+        if op == "2d/2d":
+            offs = torch.arange(k, (ngroups + 1) * k, k, device=device, dtype=torch.int32)
+            A = torch.ones((m, ngroups * k), device=device, dtype=torch.float8_e4m3fn)
+            B_T = torch.ones((n, ngroups * k), device=device, dtype=torch.float8_e4m3fn)
+            a_is_3d = b_is_3d = False
+        elif op == "2d/3d":
+            offs = torch.arange(m, (ngroups + 1) * m, m, device=device, dtype=torch.int32)
+            A = torch.ones((ngroups * m, k), device=device, dtype=torch.float8_e4m3fn)
+            B_T = torch.ones((ngroups, n, k), device=device, dtype=torch.float8_e4m3fn)
+            a_is_3d, b_is_3d = False, True
+        elif op == "3d/2d":
+            offs = torch.arange(n, (ngroups + 1) * n, n, device=device, dtype=torch.int32)
+            A = torch.ones((ngroups, m, k), device=device, dtype=torch.float8_e4m3fn)
+            B_T = torch.ones((ngroups * n, k), device=device, dtype=torch.float8_e4m3fn)
+            a_is_3d, b_is_3d = True, False
+        elif op == "3d/3d":
+            offs = None
+            A = torch.ones((ngroups, m, k), device=device, dtype=torch.float8_e4m3fn)
+            B_T = torch.ones((ngroups, n, k), device=device, dtype=torch.float8_e4m3fn)
+            a_is_3d = b_is_3d = True
+        else:
+            raise ValueError(f"unsupported grouped GEMM layout: {op}")
+
+        def make_scale(recipe, outer, is_3d):
+            if recipe == ScalingType.BlockWise1x128:
+                size = outer * ceil_div(k, 128)
+            else:
+                size = 4 * ceil_div(ceil_div(k, 128), 4) * ceil_div(outer, 128)
+            scale = torch.ones(size, device=device)
+            return torch.stack([scale] * ngroups) if is_3d else torch.cat([scale] * ngroups)
+
+        scale_a = make_scale(recipe_a, m, a_is_3d)
+        scale_b = make_scale(recipe_b, n, b_is_3d)
+        return A, B_T, scale_a, scale_b, offs
+
     @onlyCUDA
     @skipIfRocm
     @unittest.skipIf(
@@ -3107,6 +3146,61 @@ class TestFP8Matmul(TestCase):
         )
 
         self.assertEqual(C, torch.full_like(C, 128 * expected_scale))
+
+    @onlyCUDA
+    @skipIfRocm
+    @unittest.skipIf(
+        not (PLATFORM_SUPPORTS_CUBLASLT_FP8_GROUPED_GEMM and IS_SM90),
+        "cuBLASLt grouped FP32 block scaling requires SM90 and CUDA 13.4+"
+    )
+    @parametrize("op", ["2d/2d", "2d/3d", "3d/2d", "3d/3d"])
+    @parametrize("scale_pair", ["1x128/1x128", "1x128/128x128", "128x128/1x128"])
+    def test_scaled_grouped_gemm_cublaslt_hopper_block_scales(self, op, scale_pair, device):
+        recipe_by_name = {
+            "1x128": ScalingType.BlockWise1x128,
+            "128x128": ScalingType.BlockWise128x128,
+        }
+        a_name, b_name = scale_pair.split("/")
+        recipe_a = recipe_by_name[a_name]
+        recipe_b = recipe_by_name[b_name]
+        A, B_T, scale_a, scale_b, offs = self.scaled_grouped_gemm_cublaslt_hopper_scale_helper(
+            op, recipe_a, recipe_b, device
+        )
+
+        C = scaled_grouped_mm_wrap(
+            A,
+            B_T.transpose(-2, -1),
+            scale_a,
+            scale_b,
+            recipe_a,
+            recipe_b,
+            offs=offs,
+        )
+
+        self.assertEqual(C, torch.full_like(C, 128))
+
+    @onlyCUDA
+    @skipIfRocm
+    @unittest.skipIf(
+        not (PLATFORM_SUPPORTS_CUBLASLT_FP8_GROUPED_GEMM and IS_SM90),
+        "cuBLASLt grouped FP32 block scaling requires SM90 and CUDA 13.4+"
+    )
+    def test_scaled_grouped_gemm_cublaslt_hopper_block_scale_pair_error(self, device):
+        recipe = ScalingType.BlockWise128x128
+        A, B_T, scale_a, scale_b, offs = self.scaled_grouped_gemm_cublaslt_hopper_scale_helper(
+            "3d/3d", recipe, recipe, device
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "supports .* scale recipe pairs"):
+            scaled_grouped_mm_wrap(
+                A,
+                B_T.transpose(-2, -1),
+                scale_a,
+                scale_b,
+                recipe,
+                recipe,
+                offs=offs,
+            )
 
 
     @onlyCUDA

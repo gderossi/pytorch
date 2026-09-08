@@ -40,6 +40,12 @@ C10_HOST_DEVICE inline bool cublas_grouped_scale_is_blockwise(
       layout != CublasGroupedScaleLayout::PerBatchScalar;
 }
 
+C10_HOST_DEVICE inline bool cublas_grouped_scale_requires_outer_multiple_of_4(
+    CublasGroupedScaleLayout layout) {
+  return layout == CublasGroupedScaleLayout::Vec128F32 ||
+      layout == CublasGroupedScaleLayout::Block128x128F32;
+}
+
 C10_HOST_DEVICE inline int64_t cublas_grouped_scale_size_bytes(
     CublasGroupedScaleLayout layout,
     int64_t inner,
