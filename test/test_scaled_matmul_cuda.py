@@ -3049,6 +3049,43 @@ class TestFP8Matmul(TestCase):
         scale_b = make_scale(recipe_b, n, b_is_3d)
         return A, B_T, scale_a, scale_b, offs
 
+    def scaled_grouped_gemm_cublaslt_mnk4_helper(self, op, recipe_a, recipe_b, device):
+        ngroups = 3
+        m, n, k = 128, 128, 512
+
+        if op == "2d/2d":
+            offs = torch.arange(k, (ngroups + 1) * k, k, device=device, dtype=torch.int32)
+            A = torch.ones((m, ngroups * k), device=device, dtype=torch.float8_e4m3fn)
+            B_T = torch.ones((n, ngroups * k), device=device, dtype=torch.float8_e4m3fn)
+            a_is_3d = b_is_3d = False
+        elif op == "2d/3d":
+            offs = torch.arange(m, (ngroups + 1) * m, m, device=device, dtype=torch.int32)
+            A = torch.ones((ngroups * m, k), device=device, dtype=torch.float8_e4m3fn)
+            B_T = torch.ones((ngroups, n, k), device=device, dtype=torch.float8_e4m3fn)
+            a_is_3d, b_is_3d = False, True
+        elif op == "3d/2d":
+            offs = torch.arange(n, (ngroups + 1) * n, n, device=device, dtype=torch.int32)
+            A = torch.ones((ngroups, m, k), device=device, dtype=torch.float8_e4m3fn)
+            B_T = torch.ones((ngroups * n, k), device=device, dtype=torch.float8_e4m3fn)
+            a_is_3d, b_is_3d = True, False
+        elif op == "3d/3d":
+            offs = None
+            A = torch.ones((ngroups, m, k), device=device, dtype=torch.float8_e4m3fn)
+            B_T = torch.ones((ngroups, n, k), device=device, dtype=torch.float8_e4m3fn)
+            a_is_3d = b_is_3d = True
+        else:
+            raise ValueError(f"unsupported grouped GEMM layout: {op}")
+
+        def make_scale(recipe, outer, is_3d):
+            packed_k = ceil_div(k, 128 if recipe == ScalingType.BlockWise1x32 else 512)
+            size = 4 * ceil_div(outer, 4) * packed_k
+            scale = torch.full((size,), 0x7F7F7F7F, device=device, dtype=torch.int32)
+            return torch.stack([scale] * ngroups) if is_3d else torch.cat([scale] * ngroups)
+
+        scale_a = make_scale(recipe_a, m, a_is_3d)
+        scale_b = make_scale(recipe_b, n, b_is_3d)
+        return A, B_T, scale_a, scale_b, offs
+
     @onlyCUDA
     @skipIfRocm
     @unittest.skipIf(
@@ -3201,6 +3238,71 @@ class TestFP8Matmul(TestCase):
                 recipe,
                 offs=offs,
             )
+
+    @onlyCUDA
+    @skipIfRocm
+    @unittest.skipIf(
+        not (PLATFORM_SUPPORTS_CUBLASLT_FP8_GROUPED_GEMM and not IS_SM90),
+        "cuBLASLt grouped MNxK4 scaling requires SM10.x or SM11.0 and CUDA 13.4+"
+    )
+    @parametrize("op", ["2d/2d", "2d/3d", "3d/2d", "3d/3d"])
+    @parametrize("recipe", [ScalingType.BlockWise1x32, ScalingType.BlockWise1x128])
+    def test_scaled_grouped_gemm_cublaslt_mnk4(self, op, recipe, device):
+        A, B_T, scale_a, scale_b, offs = self.scaled_grouped_gemm_cublaslt_mnk4_helper(
+            op, recipe, recipe, device
+        )
+
+        C = scaled_grouped_mm_wrap(
+            A,
+            B_T.transpose(-2, -1),
+            scale_a,
+            scale_b,
+            recipe,
+            recipe,
+            offs=offs,
+        )
+
+        self.assertEqual(C, torch.full_like(C, 512))
+
+    @onlyCUDA
+    @skipIfRocm
+    @unittest.skipIf(
+        not (PLATFORM_SUPPORTS_CUBLASLT_FP8_GROUPED_GEMM and not IS_SM90),
+        "cuBLASLt grouped MNxK4 scaling requires SM10.x or SM11.0 and CUDA 13.4+"
+    )
+    def test_scaled_grouped_gemm_cublaslt_mnk4_scale_pair_error(self, device):
+        recipe_a = ScalingType.BlockWise1x32
+        recipe_b = ScalingType.BlockWise1x128
+        A, B_T, scale_a, scale_b, offs = self.scaled_grouped_gemm_cublaslt_mnk4_helper(
+            "3d/3d", recipe_a, recipe_b, device
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "same BlockWise1x32 or BlockWise1x128 recipe"):
+            scaled_grouped_mm_wrap(
+                A,
+                B_T.transpose(-2, -1),
+                scale_a,
+                scale_b,
+                recipe_a,
+                recipe_b,
+                offs=offs,
+            )
+
+    @onlyCUDA
+    @skipIfRocm
+    @unittest.skipIf(
+        not (PLATFORM_SUPPORTS_CUBLASLT_FP8_GROUPED_GEMM and not IS_SM90),
+        "cuBLASLt grouped MNxK4 scaling requires SM10.x or SM11.0 and CUDA 13.4+"
+    )
+    def test_scaled_grouped_gemm_v1_mnk4_warning(self, device):
+        recipe = ScalingType.BlockWise1x32
+        A, B_T, scale_a, scale_b, _ = self.scaled_grouped_gemm_cublaslt_mnk4_helper(
+            "3d/3d", recipe, recipe, device
+        )
+
+        with self.assertWarnsRegex(UserWarning, "cannot disambiguate int32 MNxK4 scales"):
+            with self.assertRaisesRegex(ValueError, "both scales must both be float32"):
+                torch._scaled_grouped_mm(A, B_T.transpose(-2, -1), scale_a, scale_b)
 
 
     @onlyCUDA

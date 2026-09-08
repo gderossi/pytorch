@@ -140,13 +140,17 @@ CublasLtGroupedScaleConfig resolve_cublaslt_grouped_scale_config(
       layout = CublasGroupedScaleLayout::PerBatchScalar;
       break;
     case ScalingType::BlockWise1x32:
-      layout = CublasGroupedScaleLayout::Vec32UE8M0;
+      layout = scale_dtype == at::kInt
+          ? CublasGroupedScaleLayout::Vec32MnK4UE8M0
+          : CublasGroupedScaleLayout::Vec32UE8M0;
       break;
     case ScalingType::BlockWise1x16:
       layout = CublasGroupedScaleLayout::Vec16UE4M3;
       break;
     case ScalingType::BlockWise1x128:
-      layout = CublasGroupedScaleLayout::Vec128F32;
+      layout = scale_dtype == at::kInt
+          ? CublasGroupedScaleLayout::Vec128MnK4UE8M0
+          : CublasGroupedScaleLayout::Vec128F32;
       break;
     case ScalingType::BlockWise128x128:
       layout = CublasGroupedScaleLayout::Block128x128F32;
@@ -154,10 +158,16 @@ CublasLtGroupedScaleConfig resolve_cublaslt_grouped_scale_config(
     default:
       TORCH_CHECK(false, "unsupported cuBLASLt grouped scale recipe");
   }
-  return {
-      at::cuda::blas::detail::cublasLtMatmulScaleMode(
-          scaling, scale_dtype, use_fast_accum),
-      layout};
+  int mode;
+  if (layout == CublasGroupedScaleLayout::Vec32MnK4UE8M0) {
+    mode = CUBLASLT_MATMUL_MATRIX_SCALE_VEC32_MN_K4_UE8M0;
+  } else if (layout == CublasGroupedScaleLayout::Vec128MnK4UE8M0) {
+    mode = CUBLASLT_MATMUL_MATRIX_SCALE_VEC128_MN_K4_UE8M0;
+  } else {
+    mode = at::cuda::blas::detail::cublasLtMatmulScaleMode(
+        scaling, scale_dtype, use_fast_accum);
+  }
+  return {mode, layout};
 }
 
 // Needs to stay synced with is_cublaslt_grouped_scaling_type and
@@ -232,7 +242,12 @@ void check_cublaslt_grouped_scale_recipe(
     const bool is_vec16 = scaling == ScalingType::BlockWise1x16;
     const bool is_hopper_block = scaling == ScalingType::BlockWise1x128 ||
         scaling == ScalingType::BlockWise128x128;
-    const auto expected_dtype = is_vec16
+    const bool is_mnk4 = scale.scalar_type() == at::kInt &&
+        (scaling == ScalingType::BlockWise1x32 ||
+         scaling == ScalingType::BlockWise1x128);
+    const auto expected_dtype = is_mnk4
+        ? at::kInt
+        : is_vec16
         ? at::kFloat8_e4m3fn
         : is_hopper_block ? at::kFloat : at::kFloat8_e8m0fnu;
     const char* expected_dtype_name = is_mnk4
@@ -249,7 +264,11 @@ void check_cublaslt_grouped_scale_recipe(
     const int64_t packed_multiplier = mat.scalar_type() == at::kFloat4_e2m1fn_x2 ? 2 : 1;
     const int64_t inner = (is_a ? mat.size(-1) : mat.size(-2)) * packed_multiplier;
     const int64_t outer = is_a ? mat.size(-2) : mat.size(-1);
-    const auto layout = is_vec16
+    const auto layout = is_mnk4
+        ? scaling == ScalingType::BlockWise1x32
+            ? CublasGroupedScaleLayout::Vec32MnK4UE8M0
+            : CublasGroupedScaleLayout::Vec128MnK4UE8M0
+        : is_vec16
         ? CublasGroupedScaleLayout::Vec16UE4M3
         : scaling == ScalingType::BlockWise1x32
             ? CublasGroupedScaleLayout::Vec32UE8M0
@@ -321,15 +340,17 @@ bool should_use_scaled_cublaslt_grouped_gemm(
     return false;
   }
 
-  const bool uses_hopper_block =
+  const bool uses_mnk4 = scale_a.scalar_type() == at::kInt ||
+      scale_b.scalar_type() == at::kInt;
+  const bool uses_hopper_block = !uses_mnk4 && (
       *scaling_a == ScalingType::BlockWise1x128 ||
       *scaling_a == ScalingType::BlockWise128x128 ||
       *scaling_b == ScalingType::BlockWise1x128 ||
-      *scaling_b == ScalingType::BlockWise128x128;
+      *scaling_b == ScalingType::BlockWise128x128);
   bool valid_device;
   if (uses_hopper_block) {
     valid_device = at::cuda::getCurrentDeviceProperties()->major == 9;
-  } else if (*scaling_a == ScalingType::BlockWise1x32 ||
+  } else if (uses_mnk4 || *scaling_a == ScalingType::BlockWise1x32 ||
       *scaling_b == ScalingType::BlockWise1x32 ||
       *scaling_a == ScalingType::BlockWise1x16 ||
       *scaling_b == ScalingType::BlockWise1x16) {
@@ -808,10 +829,22 @@ static void scaled_grouped_mm_cublaslt(
     const std::optional<Tensor>& alpha_scale_a,
     const std::optional<Tensor>& alpha_scale_b,
     Tensor& out) {
-  const bool a_uses_hopper_block = scaling_a == ScalingType::BlockWise1x128 ||
-      scaling_a == ScalingType::BlockWise128x128;
-  const bool b_uses_hopper_block = scaling_b == ScalingType::BlockWise1x128 ||
-      scaling_b == ScalingType::BlockWise128x128;
+  const bool a_uses_mnk4 = scale_a.scalar_type() == at::kInt;
+  const bool b_uses_mnk4 = scale_b.scalar_type() == at::kInt;
+  if (a_uses_mnk4 || b_uses_mnk4) {
+    TORCH_CHECK(
+        a_uses_mnk4 && b_uses_mnk4 && scaling_a == scaling_b &&
+            (scaling_a == ScalingType::BlockWise1x32 ||
+             scaling_a == ScalingType::BlockWise1x128),
+        "cuBLASLt grouped MNxK4 scaling requires both operands to use contiguous ",
+        "int32 scales with the same BlockWise1x32 or BlockWise1x128 recipe");
+  }
+  const bool a_uses_hopper_block = !a_uses_mnk4 &&
+      (scaling_a == ScalingType::BlockWise1x128 ||
+       scaling_a == ScalingType::BlockWise128x128);
+  const bool b_uses_hopper_block = !b_uses_mnk4 &&
+      (scaling_b == ScalingType::BlockWise1x128 ||
+       scaling_b == ScalingType::BlockWise128x128);
   if (a_uses_hopper_block || b_uses_hopper_block) {
     const bool valid_hopper_pair =
         (scaling_a == ScalingType::BlockWise1x128 &&
@@ -932,6 +965,14 @@ _scaled_grouped_mm_cuda(
     TORCH_CHECK_VALUE(offs->dtype() == at::kInt, "Offsets have to be int32");
     TORCH_CHECK_VALUE(offs->is_contiguous(), "Offsets have to be contiguous");
   }
+#if !defined(USE_ROCM) && defined(CUDA_VERSION) && CUDA_VERSION >= 13040
+  if (scale_a.scalar_type() == at::kInt || scale_b.scalar_type() == at::kInt) {
+    TORCH_WARN_ONCE(
+        "The v1 _scaled_grouped_mm API cannot disambiguate int32 MNxK4 scales; ",
+        "use _scaled_grouped_mm_v2 with an explicit BlockWise1x32 or ",
+        "BlockWise1x128 recipe.");
+  }
+#endif
   // FP8 per-tensor, per-group, and per-row scaling expect fp32 scales.
   // MXFP8 expects float8_e8m0fnu scales.
   TORCH_CHECK_VALUE(
