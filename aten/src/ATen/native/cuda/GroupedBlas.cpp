@@ -127,47 +127,81 @@ struct CublasLtGroupedScaleConfig {
   CublasGroupedScaleLayout layout;
 };
 
-CublasLtGroupedScaleConfig resolve_cublaslt_grouped_scale_config(
-    ScalingType scaling,
-    ScalarType scale_dtype,
-    bool use_fast_accum) {
+struct CublasLtGroupedScaleSpec {
   CublasGroupedScaleLayout layout;
+  ScalarType dtype;
+  const char* dtype_name;
+  const char* recipe_name;
+};
+
+std::optional<CublasLtGroupedScaleSpec> get_cublaslt_grouped_scale_spec(
+    ScalingType scaling) {
   switch (scaling) {
     case ScalingType::TensorWise:
-      layout = CublasGroupedScaleLayout::Scalar;
-      break;
+      return CublasLtGroupedScaleSpec{
+          CublasGroupedScaleLayout::Scalar,
+          at::kFloat,
+          "float32",
+          "TensorWise"};
     case ScalingType::GroupWise:
-      layout = CublasGroupedScaleLayout::PerBatchScalar;
-      break;
+      return CublasLtGroupedScaleSpec{
+          CublasGroupedScaleLayout::PerBatchScalar,
+          at::kFloat,
+          "float32",
+          "GroupWise"};
     case ScalingType::BlockWise1x32:
-      layout = CublasGroupedScaleLayout::Vec32UE8M0;
-      break;
+      return CublasLtGroupedScaleSpec{
+          CublasGroupedScaleLayout::Vec32UE8M0,
+          at::kFloat8_e8m0fnu,
+          "float8_e8m0fnu",
+          "BlockWise1x32"};
     case ScalingType::BlockWise1x32MNK4:
-      layout = CublasGroupedScaleLayout::Vec32MnK4UE8M0;
-      break;
+      return CublasLtGroupedScaleSpec{
+          CublasGroupedScaleLayout::Vec32MnK4UE8M0,
+          at::kInt,
+          "int32",
+          "BlockWise1x32MNK4"};
     case ScalingType::BlockWise1x16:
-      layout = CublasGroupedScaleLayout::Vec16UE4M3;
-      break;
+      return CublasLtGroupedScaleSpec{
+          CublasGroupedScaleLayout::Vec16UE4M3,
+          at::kFloat8_e4m3fn,
+          "float8_e4m3fn",
+          "BlockWise1x16"};
     case ScalingType::BlockWise1x128:
-      layout = CublasGroupedScaleLayout::Vec128F32;
-      break;
+      return CublasLtGroupedScaleSpec{
+          CublasGroupedScaleLayout::Vec128F32,
+          at::kFloat,
+          "float32",
+          "BlockWise1x128"};
     case ScalingType::BlockWise1x128MNK4:
-      layout = CublasGroupedScaleLayout::Vec128MnK4UE8M0;
-      break;
+      return CublasLtGroupedScaleSpec{
+          CublasGroupedScaleLayout::Vec128MnK4UE8M0,
+          at::kInt,
+          "int32",
+          "BlockWise1x128MNK4"};
     case ScalingType::BlockWise128x128:
-      layout = CublasGroupedScaleLayout::Block128x128F32;
-      break;
+      return CublasLtGroupedScaleSpec{
+          CublasGroupedScaleLayout::Block128x128F32,
+          at::kFloat,
+          "float32",
+          "BlockWise128x128"};
     default:
-      TORCH_CHECK(false, "unsupported cuBLASLt grouped scale recipe");
+      return std::nullopt;
   }
-  return {
-      at::cuda::blas::detail::cublasLtMatmulScaleMode(
-          scaling, scale_dtype, use_fast_accum),
-      layout};
 }
 
-// Needs to stay synced with is_cublaslt_grouped_scaling_type and
-// check_cublaslt_grouped_scale_recipe to support both v1 and v2 APIs
+CublasLtGroupedScaleConfig resolve_cublaslt_grouped_scale_config(
+    ScalingType scaling,
+    bool use_fast_accum) {
+  const auto spec = get_cublaslt_grouped_scale_spec(scaling);
+  TORCH_CHECK(spec, "unsupported cuBLASLt grouped scale recipe");
+  return {
+      at::cuda::blas::detail::cublasLtMatmulScaleMode(
+          scaling, spec->dtype, use_fast_accum),
+      spec->layout};
+}
+
+// The legacy API infers its smaller supported recipe set from scale metadata.
 std::optional<ScalingType> get_cublaslt_grouped_scaling_type(
     const Tensor& scale,
     int64_t batchCount) {
@@ -185,21 +219,36 @@ std::optional<ScalingType> get_cublaslt_grouped_scaling_type(
   return std::nullopt;
 }
 
-// Needs to stay synced with get_cublaslt_grouped_scaling_type and
-// check_cublaslt_grouped_scale_recipe to support both v1 and v2 APIs
 bool is_cublaslt_grouped_scaling_type(ScalingType scaling) {
-  return scaling == ScalingType::TensorWise ||
-      scaling == ScalingType::GroupWise ||
-      scaling == ScalingType::BlockWise1x32 ||
-      scaling == ScalingType::BlockWise1x32MNK4 ||
-      scaling == ScalingType::BlockWise1x16 ||
-      scaling == ScalingType::BlockWise1x128 ||
-      scaling == ScalingType::BlockWise1x128MNK4 ||
-      scaling == ScalingType::BlockWise128x128;
+  return get_cublaslt_grouped_scale_spec(scaling).has_value();
 }
 
-// Needs to stay synced with get_cublaslt_grouped_scaling_type and
-// is_cublaslt_grouped_scaling_type to support both v1 and v2 APIs
+bool is_cublaslt_grouped_scale_pair_supported(
+    ScalingType scaling_a,
+    ScalingType scaling_b) {
+  if (scaling_a == scaling_b) {
+    return scaling_a != ScalingType::BlockWise128x128;
+  }
+  return (scaling_a == ScalingType::BlockWise1x128 &&
+             scaling_b == ScalingType::BlockWise128x128) ||
+      (scaling_a == ScalingType::BlockWise128x128 &&
+          scaling_b == ScalingType::BlockWise1x128);
+}
+
+void check_cublaslt_grouped_scale_pair(
+    ScalingType scaling_a,
+    ScalingType scaling_b) {
+  const auto spec_a = get_cublaslt_grouped_scale_spec(scaling_a);
+  const auto spec_b = get_cublaslt_grouped_scale_spec(scaling_b);
+  TORCH_CHECK_VALUE(
+      spec_a && spec_b &&
+          is_cublaslt_grouped_scale_pair_supported(scaling_a, scaling_b),
+      "cuBLASLt grouped GEMM requires a supported scale recipe pair: matching recipes other than BlockWise128x128, or BlockWise1x128 paired with BlockWise128x128; got ",
+      spec_a ? spec_a->recipe_name : "unsupported",
+      " and ",
+      spec_b ? spec_b->recipe_name : "unsupported");
+}
+
 void check_cublaslt_grouped_scale_recipe(
     const Tensor& mat,
     const Tensor& scale,
@@ -207,6 +256,8 @@ void check_cublaslt_grouped_scale_recipe(
     int64_t batchCount,
     bool is_a,
     const char* name) {
+  const auto spec = get_cublaslt_grouped_scale_spec(scaling);
+  TORCH_CHECK(spec, name, " has an unsupported cuBLASLt grouped scale recipe");
   if (scaling == ScalingType::TensorWise) {
     TORCH_CHECK(
         scale.scalar_type() == at::kFloat &&
@@ -233,47 +284,19 @@ void check_cublaslt_grouped_scale_recipe(
         " elements for ",
         batchCount,
         " groups");
-  } else if (scaling == ScalingType::BlockWise1x32 ||
-             scaling == ScalingType::BlockWise1x32MNK4 ||
-             scaling == ScalingType::BlockWise1x16 ||
-             scaling == ScalingType::BlockWise1x128 ||
-             scaling == ScalingType::BlockWise1x128MNK4 ||
-             scaling == ScalingType::BlockWise128x128) {
-    const bool is_vec16 = scaling == ScalingType::BlockWise1x16;
-    const bool is_mnk4 = scaling == ScalingType::BlockWise1x32MNK4 ||
-        scaling == ScalingType::BlockWise1x128MNK4;
-    const bool is_hopper_block = scaling == ScalingType::BlockWise1x128 ||
-        scaling == ScalingType::BlockWise128x128;
-    const auto expected_dtype = is_mnk4
-        ? at::kInt
-        : is_vec16
-        ? at::kFloat8_e4m3fn
-        : is_hopper_block ? at::kFloat : at::kFloat8_e8m0fnu;
-    const char* expected_dtype_name = is_vec16
-        ? "float8_e4m3fn"
-        : is_hopper_block ? "float32" : "float8_e8m0fnu";
+  } else {
     TORCH_CHECK(
-        scale.scalar_type() == expected_dtype && scale.is_contiguous(),
+        scale.scalar_type() == spec->dtype && scale.is_contiguous() &&
+            reinterpret_cast<uintptr_t>(scale.const_data_ptr()) % 16 == 0,
         name,
         " blockwise scale must be a contiguous ",
-        expected_dtype_name,
-        " tensor");
+        spec->dtype_name,
+        " tensor with a 16-byte aligned data pointer");
     const int64_t packed_multiplier = mat.scalar_type() == at::kFloat4_e2m1fn_x2 ? 2 : 1;
     const int64_t inner = (is_a ? mat.size(-1) : mat.size(-2)) * packed_multiplier;
     const int64_t outer = is_a ? mat.size(-2) : mat.size(-1);
-    const auto layout = is_mnk4
-        ? scaling == ScalingType::BlockWise1x32MNK4
-            ? CublasGroupedScaleLayout::Vec32MnK4UE8M0
-            : CublasGroupedScaleLayout::Vec128MnK4UE8M0
-        : is_vec16
-        ? CublasGroupedScaleLayout::Vec16UE4M3
-        : scaling == ScalingType::BlockWise1x32
-            ? CublasGroupedScaleLayout::Vec32UE8M0
-            : scaling == ScalingType::BlockWise1x128
-                ? CublasGroupedScaleLayout::Vec128F32
-                : CublasGroupedScaleLayout::Block128x128F32;
     if (mat.dim() == 3 &&
-        cublas_grouped_scale_requires_outer_multiple_of_4(layout)) {
+        cublas_grouped_scale_requires_outer_multiple_of_4(spec->layout)) {
       TORCH_CHECK(
           outer % 4 == 0,
           name,
@@ -281,7 +304,7 @@ void check_cublaslt_grouped_scale_recipe(
           outer);
     }
     const int64_t scale_size = cublas_grouped_scale_size_bytes(
-        layout, inner, outer) / scale.element_size();
+        spec->layout, inner, outer) / scale.element_size();
     if (mat.dim() == 3) {
       TORCH_CHECK(
           scale.dim() == 2 &&
@@ -309,8 +332,6 @@ void check_cublaslt_grouped_scale_recipe(
           " elements, got ",
           scale.numel());
     }
-  } else {
-    TORCH_CHECK(false, name, " has an unsupported cuBLASLt grouped scale recipe");
   }
 }
 
@@ -336,6 +357,7 @@ bool should_use_scaled_cublaslt_grouped_gemm(
       !is_cublaslt_grouped_scaling_type(*scaling_b)) {
     return false;
   }
+  check_cublaslt_grouped_scale_pair(*scaling_a, *scaling_b);
 
   const bool uses_mnk4 = *scaling_a == ScalingType::BlockWise1x32MNK4 ||
       *scaling_a == ScalingType::BlockWise1x128MNK4 ||
@@ -439,15 +461,20 @@ bool cublaslt_grouped_mm_use_int64(const Tensor& mat_a, const Tensor& mat_b, con
   // dimension or any stride that ends up as a leading dim could overflow
   // int32_t. Per-group deltas (jagged dim) are bounded by the corresponding
   // total size, so checking sizes is sufficient.
-  return (mat_a.size(-2) > std::numeric_limits<int32_t>::max() ||
-      mat_a.size(-1) > std::numeric_limits<int32_t>::max() ||
-      mat_b.size(-2) > std::numeric_limits<int32_t>::max() ||
-      mat_b.size(-1) > std::numeric_limits<int32_t>::max() ||
-      mat_a.stride(-2) > std::numeric_limits<int32_t>::max() ||
-      mat_a.stride(-1) > std::numeric_limits<int32_t>::max() ||
-      mat_b.stride(-2) > std::numeric_limits<int32_t>::max() ||
-      mat_b.stride(-1) > std::numeric_limits<int32_t>::max() ||
-      out.stride(-2) > std::numeric_limits<int32_t>::max());
+  const int64_t int32_max = std::numeric_limits<int32_t>::max();
+  const int64_t k_multiplier =
+      mat_a.scalar_type() == at::kFloat4_e2m1fn_x2 ? 2 : 1;
+  const auto scaled_value_exceeds_int32 = [int32_max, k_multiplier](int64_t value) {
+    return value > int32_max / k_multiplier;
+  };
+  return mat_a.size(-2) > int32_max || mat_b.size(-1) > int32_max ||
+      scaled_value_exceeds_int32(mat_a.size(-1)) ||
+      scaled_value_exceeds_int32(mat_b.size(-2)) ||
+      scaled_value_exceeds_int32(mat_a.stride(-2)) ||
+      scaled_value_exceeds_int32(mat_a.stride(-1)) ||
+      scaled_value_exceeds_int32(mat_b.stride(-2)) ||
+      scaled_value_exceeds_int32(mat_b.stride(-1)) ||
+      out.stride(-2) > int32_max;
 }
 #endif
 
@@ -828,36 +855,13 @@ static void scaled_grouped_mm_cublaslt(
     const std::optional<Tensor>& alpha_scale_a,
     const std::optional<Tensor>& alpha_scale_b,
     Tensor& out) {
-  const bool a_uses_mnk4 = scaling_a == ScalingType::BlockWise1x32MNK4 ||
-      scaling_a == ScalingType::BlockWise1x128MNK4;
-  const bool b_uses_mnk4 = scaling_b == ScalingType::BlockWise1x32MNK4 ||
-      scaling_b == ScalingType::BlockWise1x128MNK4;
-  TORCH_CHECK(
-      !(a_uses_mnk4 || b_uses_mnk4) ||
-          (a_uses_mnk4 && b_uses_mnk4 && scaling_a == scaling_b),
-      "cuBLASLt grouped MNxK4 scaling requires both operands to use the same MNxK4 recipe");
-  const bool a_uses_hopper_block = scaling_a == ScalingType::BlockWise1x128 ||
-      scaling_a == ScalingType::BlockWise128x128;
-  const bool b_uses_hopper_block = scaling_b == ScalingType::BlockWise1x128 ||
-      scaling_b == ScalingType::BlockWise128x128;
-  if (a_uses_hopper_block || b_uses_hopper_block) {
-    const bool valid_hopper_pair =
-        (scaling_a == ScalingType::BlockWise1x128 &&
-            (scaling_b == ScalingType::BlockWise1x128 ||
-             scaling_b == ScalingType::BlockWise128x128)) ||
-        (scaling_a == ScalingType::BlockWise128x128 &&
-         scaling_b == ScalingType::BlockWise1x128);
-    TORCH_CHECK(
-        valid_hopper_pair,
-        "cuBLASLt grouped FP32 block scaling supports (1x128, 1x128), ",
-        "(1x128, 128x128), and (128x128, 1x128) scale recipe pairs");
-  }
+  check_cublaslt_grouped_scale_pair(scaling_a, scaling_b);
   check_cublaslt_grouped_scale_recipe(mat_a, scale_a, scaling_a, batchCount, /*is_a*/ true, "scale_a");
   check_cublaslt_grouped_scale_recipe(mat_b, scale_b, scaling_b, batchCount, /*is_a*/ false, "scale_b");
   const auto scale_config_a = resolve_cublaslt_grouped_scale_config(
-      scaling_a, scale_a.scalar_type(), use_fast_accum);
+      scaling_a, use_fast_accum);
   const auto scale_config_b = resolve_cublaslt_grouped_scale_config(
-      scaling_b, scale_b.scalar_type(), use_fast_accum);
+      scaling_b, use_fast_accum);
   if (mat_a.scalar_type() == at::kFloat4_e2m1fn_x2) {
     TORCH_CHECK(!use_fast_accum, "use_fast_accum is not supported for NVFP4");
   }

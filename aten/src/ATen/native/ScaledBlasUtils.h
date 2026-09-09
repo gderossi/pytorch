@@ -185,6 +185,9 @@ bool check_mxfp4_recipe(
     ArrayRef<Tensor>& scales_b);
 
 TORCH_API
+bool is_mnk4_input_type(c10::ScalarType type);
+
+TORCH_API
 bool check_mnk4_recipe(
     ScalingType expected_recipe,
     c10::ScalarType type_a,

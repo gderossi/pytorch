@@ -8885,16 +8885,25 @@ def _should_use_scaled_cublaslt_grouped_gemm(
         else mat_a.shape[0]
     )
 
-    def scaling_type_supported(scale: Tensor) -> bool:
+    def scaling_type(scale: Tensor) -> str | None:
         # tensorwise, groupwise, or blockwise MXFP8
         if scale.dtype == torch.float32:
-            return scale.numel() == 1 or (
-                scale.dim() == 1 and scale.numel() == batch_count
-            )
-        return scale.dtype == torch.float8_e8m0fnu
+            if scale.numel() == 1:
+                return "TensorWise"
+            if scale.dim() == 1 and scale.numel() == batch_count:
+                return "GroupWise"
+        elif scale.dtype == torch.float8_e8m0fnu:
+            return "BlockWise1x32"
+        return None
 
-    if not scaling_type_supported(scale_a) or not scaling_type_supported(scale_b):
+    scaling_a = scaling_type(scale_a)
+    scaling_b = scaling_type(scale_b)
+    if scaling_a is None or scaling_b is None:
         return False
+    torch._check(
+        scaling_a == scaling_b,
+        lambda: f"cuBLASLt grouped GEMM requires a supported scale recipe pair; got {scaling_a} and {scaling_b}",
+    )
 
     is_sm90 = torch.cuda.get_device_capability()[0] == 9
     uses_mxfp8 = (

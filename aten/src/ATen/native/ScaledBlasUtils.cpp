@@ -265,6 +265,11 @@ bool check_mxfp4_recipe(
   return true;
 }
 
+bool is_mnk4_input_type(c10::ScalarType type) {
+  return type == ScalarType::Float8_e4m3fn ||
+      type == ScalarType::Float8_e5m2;
+}
+
 bool check_mnk4_recipe(
     ScalingType expected_recipe,
     c10::ScalarType type_a,
@@ -273,7 +278,7 @@ bool check_mnk4_recipe(
     c10::ScalarType type_b,
     std::vector<ScalingType>& recipe_b,
     ArrayRef<Tensor>& scales_b) {
-  if (!isFloat8Type(type_a) || !isFloat8Type(type_b)) {
+  if (!is_mnk4_input_type(type_a) || !is_mnk4_input_type(type_b)) {
     return false;
   }
   if (scales_a.size() != 1 || recipe_a.size() != 1 || scales_b.size() != 1 || recipe_b.size() != 1) {

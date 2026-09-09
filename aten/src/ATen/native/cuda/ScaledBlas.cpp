@@ -820,8 +820,12 @@ Tensor& _scaled_mnk4(
 #ifndef USE_ROCM
   _check_mnk4_support();
   TORCH_CHECK_VALUE(
-      isFloat8Type(mat_a.scalar_type()) && isFloat8Type(mat_b.scalar_type()),
-      "mat_a and mat_b must be fp8 types, got: ", mat_a.scalar_type(), " and ", mat_b.scalar_type());
+      scaled_blas::is_mnk4_input_type(mat_a.scalar_type()) &&
+          scaled_blas::is_mnk4_input_type(mat_b.scalar_type()),
+      "mat_a and mat_b must be float8_e4m3fn or float8_e5m2 tensors, got: ",
+      mat_a.scalar_type(),
+      " and ",
+      mat_b.scalar_type());
   const auto packed_k = scaling_type == ScalingType::BlockWise1x32MNK4 ? 128 : 512;
   const auto expected_a_elems = round_up<int64_t>(mat_a.size(0), 4) * ceil_div<int64_t>(mat_a.size(1), packed_k);
   const auto expected_b_elems = round_up<int64_t>(mat_b.size(1), 4) * ceil_div<int64_t>(mat_b.size(0), packed_k);
@@ -831,6 +835,12 @@ Tensor& _scaled_mnk4(
   TORCH_CHECK_VALUE(
       scale_b.scalar_type() == kInt && scale_b.is_contiguous() && scale_b.numel() == expected_b_elems,
       "For packed MNxK4 scaling scale_b must be a contiguous int32 tensor with ", expected_b_elems, " elements");
+  TORCH_CHECK_VALUE(
+      reinterpret_cast<uintptr_t>(scale_a.const_data_ptr()) % 16 == 0,
+      "For packed MNxK4 scaling scale_a must have a 16-byte aligned data pointer");
+  TORCH_CHECK_VALUE(
+      reinterpret_cast<uintptr_t>(scale_b.const_data_ptr()) % 16 == 0,
+      "For packed MNxK4 scaling scale_b must have a 16-byte aligned data pointer");
   return _scaled_gemm(
       mat_a, mat_b, scale_a, scale_b, scaling_type, scaling_type, bias, use_fast_accum, out);
 #else
