@@ -151,6 +151,9 @@ CublasLtGroupedScaleConfig resolve_cublaslt_grouped_scale_config(
     case ScalingType::BlockWise1x128:
       layout = CublasGroupedScaleLayout::Vec128F32;
       break;
+    case ScalingType::BlockWise1x128MNK4:
+      layout = CublasGroupedScaleLayout::Vec128MnK4UE8M0;
+      break;
     case ScalingType::BlockWise128x128:
       layout = CublasGroupedScaleLayout::Block128x128F32;
       break;
@@ -191,6 +194,7 @@ bool is_cublaslt_grouped_scaling_type(ScalingType scaling) {
       scaling == ScalingType::BlockWise1x32MNK4 ||
       scaling == ScalingType::BlockWise1x16 ||
       scaling == ScalingType::BlockWise1x128 ||
+      scaling == ScalingType::BlockWise1x128MNK4 ||
       scaling == ScalingType::BlockWise128x128;
 }
 
@@ -233,9 +237,11 @@ void check_cublaslt_grouped_scale_recipe(
              scaling == ScalingType::BlockWise1x32MNK4 ||
              scaling == ScalingType::BlockWise1x16 ||
              scaling == ScalingType::BlockWise1x128 ||
+             scaling == ScalingType::BlockWise1x128MNK4 ||
              scaling == ScalingType::BlockWise128x128) {
     const bool is_vec16 = scaling == ScalingType::BlockWise1x16;
-    const bool is_mnk4 = scaling == ScalingType::BlockWise1x32MNK4;
+    const bool is_mnk4 = scaling == ScalingType::BlockWise1x32MNK4 ||
+        scaling == ScalingType::BlockWise1x128MNK4;
     const bool is_hopper_block = scaling == ScalingType::BlockWise1x128 ||
         scaling == ScalingType::BlockWise128x128;
     const auto expected_dtype = is_mnk4
@@ -256,7 +262,9 @@ void check_cublaslt_grouped_scale_recipe(
     const int64_t inner = (is_a ? mat.size(-1) : mat.size(-2)) * packed_multiplier;
     const int64_t outer = is_a ? mat.size(-2) : mat.size(-1);
     const auto layout = is_mnk4
-        ? CublasGroupedScaleLayout::Vec32MnK4UE8M0
+        ? scaling == ScalingType::BlockWise1x32MNK4
+            ? CublasGroupedScaleLayout::Vec32MnK4UE8M0
+            : CublasGroupedScaleLayout::Vec128MnK4UE8M0
         : is_vec16
         ? CublasGroupedScaleLayout::Vec16UE4M3
         : scaling == ScalingType::BlockWise1x32
@@ -330,7 +338,9 @@ bool should_use_scaled_cublaslt_grouped_gemm(
   }
 
   const bool uses_mnk4 = *scaling_a == ScalingType::BlockWise1x32MNK4 ||
-      *scaling_b == ScalingType::BlockWise1x32MNK4;
+      *scaling_a == ScalingType::BlockWise1x128MNK4 ||
+      *scaling_b == ScalingType::BlockWise1x32MNK4 ||
+      *scaling_b == ScalingType::BlockWise1x128MNK4;
   const bool uses_hopper_block = !uses_mnk4 && (
       *scaling_a == ScalingType::BlockWise1x128 ||
       *scaling_a == ScalingType::BlockWise128x128 ||
@@ -818,10 +828,13 @@ static void scaled_grouped_mm_cublaslt(
     const std::optional<Tensor>& alpha_scale_a,
     const std::optional<Tensor>& alpha_scale_b,
     Tensor& out) {
-  const bool a_uses_mnk4 = scaling_a == ScalingType::BlockWise1x32MNK4;
-  const bool b_uses_mnk4 = scaling_b == ScalingType::BlockWise1x32MNK4;
+  const bool a_uses_mnk4 = scaling_a == ScalingType::BlockWise1x32MNK4 ||
+      scaling_a == ScalingType::BlockWise1x128MNK4;
+  const bool b_uses_mnk4 = scaling_b == ScalingType::BlockWise1x32MNK4 ||
+      scaling_b == ScalingType::BlockWise1x128MNK4;
   TORCH_CHECK(
-      !(a_uses_mnk4 || b_uses_mnk4) || (a_uses_mnk4 && b_uses_mnk4),
+      !(a_uses_mnk4 || b_uses_mnk4) ||
+          (a_uses_mnk4 && b_uses_mnk4 && scaling_a == scaling_b),
       "cuBLASLt grouped MNxK4 scaling requires both operands to use the same MNxK4 recipe");
   const bool a_uses_hopper_block = scaling_a == ScalingType::BlockWise1x128 ||
       scaling_a == ScalingType::BlockWise128x128;

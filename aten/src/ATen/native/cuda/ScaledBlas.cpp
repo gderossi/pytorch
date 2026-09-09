@@ -666,7 +666,7 @@ namespace {
 using namespace std::placeholders;
 using scaled_blas::ScaleKernelDispatchEntry;
 
-std::array<ScaleKernelDispatchEntry, 10> scale_kernel_dispatch = {{
+std::array<ScaleKernelDispatchEntry, 11> scale_kernel_dispatch = {{
   { "tensorwise_tensorwise", scaled_blas::check_tensorwise_recipe, ScaledGemmImplementation::TENSORWISE_TENSORWISE },
   { "rowwise_rowwise", scaled_blas::check_rowwise_recipe, ScaledGemmImplementation::ROWWISE_ROWWISE},
   { "block_1x128_128x128", std::bind(scaled_blas::check_deepseek_recipe, ScalingType::BlockWise1x128, ScalingType::BlockWise128x128, _1, _2, _3, _4, _5, _6),
@@ -677,6 +677,8 @@ std::array<ScaleKernelDispatchEntry, 10> scale_kernel_dispatch = {{
     ScaledGemmImplementation::BLOCK_1x128_1x128},
   { "mnk4_1x32", std::bind(scaled_blas::check_mnk4_recipe, ScalingType::BlockWise1x32MNK4, _1, _2, _3, _4, _5, _6),
     ScaledGemmImplementation::MNK4_1x32},
+  { "mnk4_1x128", std::bind(scaled_blas::check_mnk4_recipe, ScalingType::BlockWise1x128MNK4, _1, _2, _3, _4, _5, _6),
+    ScaledGemmImplementation::MNK4_1x128},
   { "nvfp4_nvfp4", scaled_blas::check_nvfp4_recipe, ScaledGemmImplementation::NVFP4_NVFP4},
   { "nvfp4_nvfp4_single_scale", scaled_blas::check_nvfp4_recipe_single_scale, ScaledGemmImplementation::NVFP4_NVFP4_SINGLE_SCALE },
   { "mxfp8_mxfp8", scaled_blas::check_mxfp8_recipe, ScaledGemmImplementation::MXFP8_MXFP8},
@@ -1497,6 +1499,8 @@ TORCH_IMPL_FUNC(_scaled_mm_cuda_v2_out)(
     _scaled_block1x128_block1x128(mat_a, mat_b, scale_a[0], scale_b[0], bias_opt, out_dtype_, use_fast_accum, out_mut);
   } else if (gemm_impl == ScaledGemmImplementation::MNK4_1x32) {
     _scaled_mnk4(mat_a, mat_b, scale_a[0], scale_b[0], ScalingType::BlockWise1x32MNK4, bias_opt, use_fast_accum, out_mut);
+  } else if (gemm_impl == ScaledGemmImplementation::MNK4_1x128) {
+    _scaled_mnk4(mat_a, mat_b, scale_a[0], scale_b[0], ScalingType::BlockWise1x128MNK4, bias_opt, use_fast_accum, out_mut);
   } else if (gemm_impl == ScaledGemmImplementation::MXFP8_MXFP8) {
     _scaled_mxfp8_mxfp8(mat_a, mat_b, scale_a[0], swizzle_a_enum[0], scale_b[0], swizzle_b_enum[0], bias_opt, out_dtype_, out_mut);
   } else if (gemm_impl == ScaledGemmImplementation::NVFP4_NVFP4) {

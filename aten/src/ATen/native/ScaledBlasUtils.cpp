@@ -388,6 +388,8 @@ void validate_scaled_mm_v2_inputs(
   const bool is_nv_2lvl = is_two_level_nvfp4(recipe_a, recipe_b);
   const bool is_mnk4_1x32 = is_single_recipe(
       recipe_a, recipe_b, ScalingType::BlockWise1x32MNK4, ScalingType::BlockWise1x32MNK4);
+  const bool is_mnk4_1x128 = is_single_recipe(
+      recipe_a, recipe_b, ScalingType::BlockWise1x128MNK4, ScalingType::BlockWise1x128MNK4);
   // BlockWise1x128/128x128 combinations (DeepSeek-style) are deliberately
   // not validated here: they require SM90 and fail with NotImplementedError
   // from the kernel on other archs, which tests rely on.
@@ -492,8 +494,8 @@ void validate_scaled_mm_v2_inputs(
             scale_b[1].scalar_type() == ScalarType::Float,
         "For Blockwise scaling scale_b should have ", expected_b_elems,
         " elements, got: ", scale_b[0].sym_numel());
-  } else if (is_mnk4_1x32) {
-    const auto packed_k = 128;
+  } else if (is_mnk4_1x32 || is_mnk4_1x128) {
+    const auto packed_k = is_mnk4_1x32 ? 128 : 512;
     const auto expected_a_elems = sym_round_up(M, 4) * sym_ceil_div(K_unpacked, packed_k);
     const auto expected_b_elems = sym_round_up(N, 4) * sym_ceil_div(K_unpacked, packed_k);
     TORCH_CHECK_VALUE(
