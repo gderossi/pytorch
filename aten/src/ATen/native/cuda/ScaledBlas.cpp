@@ -666,7 +666,7 @@ namespace {
 using namespace std::placeholders;
 using scaled_blas::ScaleKernelDispatchEntry;
 
-std::array<ScaleKernelDispatchEntry, 9> scale_kernel_dispatch = {{
+std::array<ScaleKernelDispatchEntry, 10> scale_kernel_dispatch = {{
   { "tensorwise_tensorwise", scaled_blas::check_tensorwise_recipe, ScaledGemmImplementation::TENSORWISE_TENSORWISE },
   { "rowwise_rowwise", scaled_blas::check_rowwise_recipe, ScaledGemmImplementation::ROWWISE_ROWWISE},
   { "block_1x128_128x128", std::bind(scaled_blas::check_deepseek_recipe, ScalingType::BlockWise1x128, ScalingType::BlockWise128x128, _1, _2, _3, _4, _5, _6),
@@ -675,6 +675,8 @@ std::array<ScaleKernelDispatchEntry, 9> scale_kernel_dispatch = {{
     ScaledGemmImplementation::BLOCK_128x128_1x128},
   { "block_1x128_1x128", std::bind(scaled_blas::check_deepseek_recipe, ScalingType::BlockWise1x128, ScalingType::BlockWise1x128, _1, _2, _3, _4, _5, _6),
     ScaledGemmImplementation::BLOCK_1x128_1x128},
+  { "mnk4_1x32", std::bind(scaled_blas::check_mnk4_recipe, ScalingType::BlockWise1x32MNK4, _1, _2, _3, _4, _5, _6),
+    ScaledGemmImplementation::MNK4_1x32},
   { "nvfp4_nvfp4", scaled_blas::check_nvfp4_recipe, ScaledGemmImplementation::NVFP4_NVFP4},
   { "nvfp4_nvfp4_single_scale", scaled_blas::check_nvfp4_recipe_single_scale, ScaledGemmImplementation::NVFP4_NVFP4_SINGLE_SCALE },
   { "mxfp8_mxfp8", scaled_blas::check_mxfp8_recipe, ScaledGemmImplementation::MXFP8_MXFP8},
@@ -789,6 +791,48 @@ _check_deepseek_support() {
     CUBLAS_VERSION >= 120900 && cublasLtGetVersion() >= 120900,
     "DeepSeek style (1x128, 128x128) scaling requires cublasLt >= 12.9"
   );
+#endif
+}
+
+void _check_mnk4_support() {
+#ifndef USE_ROCM
+  const auto dprops = at::cuda::getCurrentDeviceProperties();
+  TORCH_CHECK_NOT_IMPLEMENTED(
+      dprops->major == 10 || dprops->major == 11,
+      "packed MNxK4 scaling is only supported on SM10.x and SM11.0");
+  TORCH_CHECK_NOT_IMPLEMENTED(
+      CUBLAS_VERSION >= 130400 && cublasLtGetVersion() >= 130400,
+      "packed MNxK4 scaling requires cuBLASLt >= 13.4");
+#endif
+}
+
+Tensor& _scaled_mnk4(
+    const Tensor& mat_a,
+    const Tensor& mat_b,
+    const Tensor& scale_a,
+    const Tensor& scale_b,
+    ScalingType scaling_type,
+    const std::optional<Tensor>& bias,
+    bool use_fast_accum,
+    Tensor& out) {
+#ifndef USE_ROCM
+  _check_mnk4_support();
+  TORCH_CHECK_VALUE(
+      isFloat8Type(mat_a.scalar_type()) && isFloat8Type(mat_b.scalar_type()),
+      "mat_a and mat_b must be fp8 types, got: ", mat_a.scalar_type(), " and ", mat_b.scalar_type());
+  const auto packed_k = scaling_type == ScalingType::BlockWise1x32MNK4 ? 128 : 512;
+  const auto expected_a_elems = round_up<int64_t>(mat_a.size(0), 4) * ceil_div<int64_t>(mat_a.size(1), packed_k);
+  const auto expected_b_elems = round_up<int64_t>(mat_b.size(1), 4) * ceil_div<int64_t>(mat_b.size(0), packed_k);
+  TORCH_CHECK_VALUE(
+      scale_a.scalar_type() == kInt && scale_a.is_contiguous() && scale_a.numel() == expected_a_elems,
+      "For packed MNxK4 scaling scale_a must be a contiguous int32 tensor with ", expected_a_elems, " elements");
+  TORCH_CHECK_VALUE(
+      scale_b.scalar_type() == kInt && scale_b.is_contiguous() && scale_b.numel() == expected_b_elems,
+      "For packed MNxK4 scaling scale_b must be a contiguous int32 tensor with ", expected_b_elems, " elements");
+  return _scaled_gemm(
+      mat_a, mat_b, scale_a, scale_b, scaling_type, scaling_type, bias, use_fast_accum, out);
+#else
+  TORCH_CHECK_NOT_IMPLEMENTED(false, "packed MNxK4 scaling is not supported on ROCm");
 #endif
 }
 
@@ -1433,6 +1477,7 @@ TORCH_IMPL_FUNC(_scaled_mm_cuda_v2_out)(
     "- For BlockWise 128x128 scaling, a and b should be float8, scales should be float, scale_a should be (", ceil_div<int64_t>(mat_a.size(0), 128), ", ", ceil_div<int64_t>(mat_a.size(1), 128), ") and scale_b should be (", ceil_div<int64_t>(mat_b.size(0), 128), ", ", ceil_div<int64_t>(mat_b.size(1), 128), "), and both should be near-inner-dim-major (with 16-byte aligned strides).\n"
     "- For Blockwise 1x32 scaling, a and b should be float8, scales should be float8_e8m0fnu, scale_a should have ", round_up<int64_t>(mat_a.size(0), 128) * round_up<int64_t>(ceil_div<int64_t>(mat_a.size(1), 32), 4), " elements and scale_b should have ", round_up<int64_t>(mat_b.size(1), 128) * round_up<int64_t>(ceil_div<int64_t>(mat_b.size(0), 32), 4), " elements, and both should be contiguous.\n"
     "- For Blockwise 1x16 scaling, a and b should be float4 (packed 2x), scales should be float8_e4m3fn, scale_a should have ", round_up<int64_t>(mat_a.size(0), 128) * round_up<int64_t>(ceil_div<int64_t>(mat_a.size(1) * 2, 16), 4), " elements and scale_b should have ", round_up<int64_t>(mat_b.size(1), 128) * round_up<int64_t>(ceil_div<int64_t>(mat_b.size(0) * 2, 16), 4), " elements, and both should be contiguous.\n"
+    "- For packed MNxK4 scaling, a and b should be float8 and both scales should be contiguous int32 tensors.\n"
     "Got mat_a.dtype()=", mat_a.scalar_type(), ", scale_a[0].dtype()=", scale_a[0].scalar_type(), ", scale_a[0].size()=", scale_a[0].sizes(), ", scale_a[0].stride()=", scale_a[0].strides(), ", ",
     "mat_b.dtype()=", mat_b.scalar_type(), ", scale_b[0].dtype()=", scale_b[0].scalar_type(), ", scale_b[0].size()=", scale_b[0].sizes(), " and scale_b[0].stride()=", scale_b[0].strides()
   );
@@ -1450,6 +1495,8 @@ TORCH_IMPL_FUNC(_scaled_mm_cuda_v2_out)(
     _scaled_block1x128_block128x128(mat_a, mat_b, scale_a[0], scale_b[0], bias_opt, out_dtype_, use_fast_accum, out_mut);
   } else if (gemm_impl == ScaledGemmImplementation::BLOCK_1x128_1x128) {
     _scaled_block1x128_block1x128(mat_a, mat_b, scale_a[0], scale_b[0], bias_opt, out_dtype_, use_fast_accum, out_mut);
+  } else if (gemm_impl == ScaledGemmImplementation::MNK4_1x32) {
+    _scaled_mnk4(mat_a, mat_b, scale_a[0], scale_b[0], ScalingType::BlockWise1x32MNK4, bias_opt, use_fast_accum, out_mut);
   } else if (gemm_impl == ScaledGemmImplementation::MXFP8_MXFP8) {
     _scaled_mxfp8_mxfp8(mat_a, mat_b, scale_a[0], swizzle_a_enum[0], scale_b[0], swizzle_b_enum[0], bias_opt, out_dtype_, out_mut);
   } else if (gemm_impl == ScaledGemmImplementation::NVFP4_NVFP4) {

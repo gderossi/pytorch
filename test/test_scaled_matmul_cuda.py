@@ -3049,6 +3049,44 @@ class TestFP8Matmul(TestCase):
         scale_b = make_scale(recipe_b, n, b_is_3d)
         return A, B_T, scale_a, scale_b, offs
 
+    def scaled_grouped_gemm_cublaslt_mnk4_helper(self, op, device):
+        ngroups = 3
+        m, n, k = 128, 128, 512
+
+        if op == "2d/2d":
+            offs = torch.arange(k, (ngroups + 1) * k, k, device=device, dtype=torch.int32)
+            A = torch.ones((m, ngroups * k), device=device, dtype=torch.float8_e4m3fn)
+            B_T = torch.ones((n, ngroups * k), device=device, dtype=torch.float8_e4m3fn)
+            a_is_3d = b_is_3d = False
+        elif op == "2d/3d":
+            offs = torch.arange(m, (ngroups + 1) * m, m, device=device, dtype=torch.int32)
+            A = torch.ones((ngroups * m, k), device=device, dtype=torch.float8_e4m3fn)
+            B_T = torch.ones((ngroups, n, k), device=device, dtype=torch.float8_e4m3fn)
+            a_is_3d, b_is_3d = False, True
+        elif op == "3d/2d":
+            offs = torch.arange(n, (ngroups + 1) * n, n, device=device, dtype=torch.int32)
+            A = torch.ones((ngroups, m, k), device=device, dtype=torch.float8_e4m3fn)
+            B_T = torch.ones((ngroups * n, k), device=device, dtype=torch.float8_e4m3fn)
+            a_is_3d, b_is_3d = True, False
+        elif op == "3d/3d":
+            offs = None
+            A = torch.ones((ngroups, m, k), device=device, dtype=torch.float8_e4m3fn)
+            B_T = torch.ones((ngroups, n, k), device=device, dtype=torch.float8_e4m3fn)
+            a_is_3d = b_is_3d = True
+        else:
+            raise ValueError(f"unsupported grouped GEMM layout: {op}")
+
+        scale_size = 4 * ceil_div(m, 4) * ceil_div(k, 128)
+        scale_a = torch.full((scale_size,), 0x7F7F7F7F, device=device, dtype=torch.int32)
+        scale_b = torch.full((scale_size,), 0x7F7F7F7F, device=device, dtype=torch.int32)
+        return (
+            A,
+            B_T,
+            torch.stack([scale_a] * ngroups) if a_is_3d else torch.cat([scale_a] * ngroups),
+            torch.stack([scale_b] * ngroups) if b_is_3d else torch.cat([scale_b] * ngroups),
+            offs,
+        )
+
     @onlyCUDA
     @skipIfRocm
     @unittest.skipIf(
@@ -3201,6 +3239,47 @@ class TestFP8Matmul(TestCase):
                 recipe,
                 offs=offs,
             )
+
+    @onlyCUDA
+    @skipIfRocm
+    @unittest.skipIf(
+        not (PLATFORM_SUPPORTS_CUBLASLT_FP8_GROUPED_GEMM and not IS_SM90),
+        "cuBLASLt grouped 1x32 MNxK4 scaling requires SM10.x or SM11.0 and CUDA 13.4+",
+    )
+    @parametrize("op", ["2d/2d", "2d/3d", "3d/2d", "3d/3d"])
+    def test_scaled_grouped_gemm_cublaslt_mnk4_1x32(self, op, device):
+        A, B_T, scale_a, scale_b, offs = self.scaled_grouped_gemm_cublaslt_mnk4_helper(op, device)
+        C = scaled_grouped_mm_wrap(
+            A,
+            B_T.transpose(-2, -1),
+            scale_a,
+            scale_b,
+            ScalingType.BlockWise1x32MNK4,
+            ScalingType.BlockWise1x32MNK4,
+            offs=offs,
+        )
+        self.assertEqual(C, torch.full_like(C, 512))
+
+    @onlyCUDA
+    @skipIfRocm
+    @unittest.skipIf(
+        not (PLATFORM_SUPPORTS_CUBLASLT_FP8_GROUPED_GEMM and not IS_SM90),
+        "cuBLASLt 1x32 MNxK4 scaling requires SM10.x or SM11.0 and CUDA 13.4+",
+    )
+    def test_scaled_mm_cublaslt_mnk4_1x32(self, device):
+        m, n, k = 128, 128, 512
+        A = torch.ones((m, k), device=device, dtype=torch.float8_e4m3fn)
+        B = torch.ones((k, n), device=device, dtype=torch.float8_e4m3fn)
+        scale = torch.full((4 * ceil_div(m, 4) * ceil_div(k, 128),), 0x7F7F7F7F, device=device, dtype=torch.int32)
+        C = scaled_mm(
+            A,
+            B,
+            scale,
+            ScalingType.BlockWise1x32MNK4,
+            scale,
+            ScalingType.BlockWise1x32MNK4,
+        )
+        self.assertEqual(C, torch.full_like(C, 512))
 
 
     @onlyCUDA
