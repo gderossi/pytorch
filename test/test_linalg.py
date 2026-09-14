@@ -58,6 +58,27 @@ from torch.testing._internal.common_utils import (
 
 f8_msg = "FP8 is only supported on H100+, SM 8.9 and MI300+, XPU and CPU devices"
 
+
+def setUpModule():
+    if (
+        torch.profiler.kineto_available()
+        and torch.cuda.is_available()
+        and torch.profiler.ProfilerActivity.CUDA
+        in torch.profiler.supported_activities()
+    ):
+        # Kineto's process-global profiler cannot currently upgrade from a
+        # CPU-only first initialization to CUDA-capable profiling.
+        x = torch.ones(1, device="cuda")
+        with torch.profiler.profile(
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ]
+        ):
+            x + x
+            torch.cuda.synchronize()
+
+
 # Protects against includes accidentally setting the default dtype
 if torch.get_default_dtype() is not torch.float32:
     raise AssertionError(f"default dtype should be float32, got {torch.get_default_dtype()}")
