@@ -250,12 +250,33 @@ inline int cublasLtMatmulScaleMode(
           "scaled_gemm with 128x128 blockwise scaling is only supported for "
           "CUDA 12.9 and above");
 #endif
+    case at::blas::ScalingType::BlockWise1x32MNK4:
+      TORCH_CHECK(scale_dtype == kInt);
+#if !defined(USE_ROCM) && CUDA_VERSION >= 13040
+      return CUBLASLT_MATMUL_MATRIX_SCALE_VEC32_MN_K4_UE8M0;
+#else
+      TORCH_CHECK(false, "packed 1x32 MNxK4 scaling requires CUDA >= 13.4");
+#endif
+    case at::blas::ScalingType::BlockWise1x128MNK4:
+      TORCH_CHECK(scale_dtype == kInt);
+#if !defined(USE_ROCM) && CUDA_VERSION >= 13040
+      return CUBLASLT_MATMUL_MATRIX_SCALE_VEC128_MN_K4_UE8M0;
+#else
+      TORCH_CHECK(false, "packed 1x128 MNxK4 scaling requires CUDA >= 13.4");
+#endif
     case at::blas::ScalingType::TensorWise:
       TORCH_CHECK(scale_dtype == kFloat);
 #if CUDA_VERSION >= 12080
       return CUBLASLT_MATMUL_MATRIX_SCALE_SCALAR_32F;
 #else
       return 0;
+#endif
+    case at::blas::ScalingType::GroupWise:
+      TORCH_CHECK(scale_dtype == kFloat);
+#if !defined(USE_ROCM) && CUDA_VERSION >= 13040
+      return CUBLASLT_MATMUL_MATRIX_SCALE_PER_BATCH_SCALAR_32F;
+#else
+      TORCH_CHECK(false, "per-batch scalar scaling requires CUDA >= 13.4");
 #endif
     default:
       TORCH_CHECK(false);
