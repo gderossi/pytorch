@@ -119,7 +119,7 @@ struct CublasLtGroupedScaleSpec {
 
 std::optional<CublasLtGroupedScaleSpec> get_cublaslt_grouped_scale_spec(
     ScalingType scaling,
-    ScalarType scale_dtype) {
+    SwizzleType swizzle) {
   switch (scaling) {
     case ScalingType::TensorWise:
       return CublasLtGroupedScaleSpec{
@@ -128,11 +128,11 @@ std::optional<CublasLtGroupedScaleSpec> get_cublaslt_grouped_scale_spec(
           "float32",
           "TensorWise"};
     case ScalingType::BlockWise1x32:
-      if (scale_dtype == at::kInt) {
+      if (swizzle == SwizzleType::SWIZZLE_MNxK4) {
         return CublasLtGroupedScaleSpec{
             CublasGroupedScaleLayout::Vec32MnK4UE8M0,
-            at::kInt,
-            "int32",
+            at::kFloat8_e8m0fnu,
+            "float8_e8m0fnu",
             "BlockWise1x32"};
       }
       return CublasLtGroupedScaleSpec{
@@ -147,11 +147,11 @@ std::optional<CublasLtGroupedScaleSpec> get_cublaslt_grouped_scale_spec(
           "float8_e4m3fn",
           "BlockWise1x16"};
     case ScalingType::BlockWise1x128:
-      if (scale_dtype == at::kInt) {
+      if (swizzle == SwizzleType::SWIZZLE_MNxK4) {
         return CublasLtGroupedScaleSpec{
             CublasGroupedScaleLayout::Vec128MnK4UE8M0,
-            at::kInt,
-            "int32",
+            at::kFloat8_e8m0fnu,
+            "float8_e8m0fnu",
             "BlockWise1x128"};
       }
       return CublasLtGroupedScaleSpec{
@@ -173,8 +173,9 @@ std::optional<CublasLtGroupedScaleSpec> get_cublaslt_grouped_scale_spec(
 CublasLtGroupedScaleConfig resolve_cublaslt_grouped_scale_config(
     ScalingType scaling,
     const Tensor& scale,
+    SwizzleType swizzle,
     bool use_fast_accum) {
-  const auto spec = get_cublaslt_grouped_scale_spec(scaling, scale.scalar_type());
+  const auto spec = get_cublaslt_grouped_scale_spec(scaling, swizzle);
   TORCH_CHECK(spec, "unsupported cuBLASLt grouped scale recipe");
   if (scaling == ScalingType::TensorWise && scale.numel() != 1) {
     return {
@@ -183,7 +184,7 @@ CublasLtGroupedScaleConfig resolve_cublaslt_grouped_scale_config(
   }
   return {
       at::cuda::blas::detail::cublasLtMatmulScaleMode(
-          scaling, SwizzleType::NO_SWIZZLE, spec->dtype, use_fast_accum),
+          scaling, swizzle, spec->dtype, use_fast_accum),
       spec->layout};
 }
 
@@ -205,8 +206,8 @@ std::optional<ScalingType> get_cublaslt_grouped_scaling_type(
   return std::nullopt;
 }
 
-bool is_cublaslt_grouped_scaling_type(ScalingType scaling, const Tensor& scale) {
-  return get_cublaslt_grouped_scale_spec(scaling, scale.scalar_type()).has_value();
+bool is_cublaslt_grouped_scaling_type(ScalingType scaling, SwizzleType swizzle) {
+  return get_cublaslt_grouped_scale_spec(scaling, swizzle).has_value();
 }
 
 bool is_cublaslt_grouped_scale_pair_supported(
@@ -224,15 +225,15 @@ bool is_cublaslt_grouped_scale_pair_supported(
 void check_cublaslt_grouped_scale_pair(
     ScalingType scaling_a,
     ScalingType scaling_b,
-    const Tensor& scale_a,
-    const Tensor& scale_b) {
-  const auto spec_a = get_cublaslt_grouped_scale_spec(scaling_a, scale_a.scalar_type());
-  const auto spec_b = get_cublaslt_grouped_scale_spec(scaling_b, scale_b.scalar_type());
+    SwizzleType swizzle_a,
+    SwizzleType swizzle_b) {
+  const auto spec_a = get_cublaslt_grouped_scale_spec(scaling_a, swizzle_a);
+  const auto spec_b = get_cublaslt_grouped_scale_spec(scaling_b, swizzle_b);
   TORCH_CHECK_VALUE(
       spec_a && spec_b &&
           is_cublaslt_grouped_scale_pair_supported(scaling_a, scaling_b) &&
-          ((scale_a.scalar_type() != at::kInt && scale_b.scalar_type() != at::kInt) ||
-           (scale_a.scalar_type() == at::kInt && scale_b.scalar_type() == at::kInt && scaling_a == scaling_b)),
+          ((swizzle_a != SwizzleType::SWIZZLE_MNxK4 && swizzle_b != SwizzleType::SWIZZLE_MNxK4) ||
+           (swizzle_a == SwizzleType::SWIZZLE_MNxK4 && swizzle_b == SwizzleType::SWIZZLE_MNxK4 && scaling_a == scaling_b)),
       "cuBLASLt grouped GEMM requires a supported scale recipe pair: matching recipes other than BlockWise128x128, or BlockWise1x128 paired with BlockWise128x128; got ",
       spec_a ? spec_a->recipe_name : "unsupported",
       " and ",
@@ -243,10 +244,11 @@ void check_cublaslt_grouped_scale_recipe(
     const Tensor& mat,
     const Tensor& scale,
     ScalingType scaling,
+    SwizzleType swizzle,
     int64_t batchCount,
     bool is_a,
     const char* name) {
-  const auto spec = get_cublaslt_grouped_scale_spec(scaling, scale.scalar_type());
+  const auto spec = get_cublaslt_grouped_scale_spec(scaling, swizzle);
   TORCH_CHECK(spec, name, " has an unsupported cuBLASLt grouped scale recipe");
   if (scaling == ScalingType::TensorWise) {
     TORCH_CHECK(
@@ -319,8 +321,8 @@ void check_cublaslt_grouped_scale_recipe(
 bool should_use_scaled_cublaslt_grouped_gemm(
   const Tensor& mat_a,
   const Tensor& mat_b,
-  const Tensor& scale_a,
-  const Tensor& scale_b,
+  SwizzleType swizzle_a,
+  SwizzleType swizzle_b,
   std::optional<c10::ScalarType> out_dtype_,
   std::optional<ScalingType> scaling_a,
   std::optional<ScalingType> scaling_b,
@@ -332,13 +334,13 @@ bool should_use_scaled_cublaslt_grouped_gemm(
     return false;
   }
 
-  if (!is_cublaslt_grouped_scaling_type(*scaling_a, scale_a) ||
-      !is_cublaslt_grouped_scaling_type(*scaling_b, scale_b)) {
+  if (!is_cublaslt_grouped_scaling_type(*scaling_a, swizzle_a) ||
+      !is_cublaslt_grouped_scaling_type(*scaling_b, swizzle_b)) {
     return false;
   }
-  check_cublaslt_grouped_scale_pair(*scaling_a, *scaling_b, scale_a, scale_b);
+  check_cublaslt_grouped_scale_pair(*scaling_a, *scaling_b, swizzle_a, swizzle_b);
 
-  const bool uses_mnk4 = scale_a.scalar_type() == at::kInt;
+  const bool uses_mnk4 = swizzle_a == SwizzleType::SWIZZLE_MNxK4;
   if (!uses_mnk4 && *scaling_a == ScalingType::BlockWise1x32 &&
       !at::globalContext().preferCublasltGroupedGemm()) {
     return false;
@@ -832,16 +834,18 @@ static void scaled_grouped_mm_cublaslt(
     int batchCount,
     ScalingType scaling_a,
     ScalingType scaling_b,
+    SwizzleType swizzle_a,
+    SwizzleType swizzle_b,
     const std::optional<Tensor>& alpha_scale_a,
     const std::optional<Tensor>& alpha_scale_b,
     Tensor& out) {
-  check_cublaslt_grouped_scale_pair(scaling_a, scaling_b, scale_a, scale_b);
-  check_cublaslt_grouped_scale_recipe(mat_a, scale_a, scaling_a, batchCount, /*is_a*/ true, "scale_a");
-  check_cublaslt_grouped_scale_recipe(mat_b, scale_b, scaling_b, batchCount, /*is_a*/ false, "scale_b");
+  check_cublaslt_grouped_scale_pair(scaling_a, scaling_b, swizzle_a, swizzle_b);
+  check_cublaslt_grouped_scale_recipe(mat_a, scale_a, scaling_a, swizzle_a, batchCount, /*is_a*/ true, "scale_a");
+  check_cublaslt_grouped_scale_recipe(mat_b, scale_b, scaling_b, swizzle_b, batchCount, /*is_a*/ false, "scale_b");
   const auto scale_config_a = resolve_cublaslt_grouped_scale_config(
-      scaling_a, scale_a, use_fast_accum);
+      scaling_a, scale_a, swizzle_a, use_fast_accum);
   const auto scale_config_b = resolve_cublaslt_grouped_scale_config(
-      scaling_b, scale_b, use_fast_accum);
+      scaling_b, scale_b, swizzle_b, use_fast_accum);
   if (scaling_a == ScalingType::TensorWise && scaling_b == ScalingType::TensorWise) {
     TORCH_CHECK_VALUE(
         scale_config_a.layout == scale_config_b.layout,
@@ -964,8 +968,8 @@ _scaled_grouped_mm_cuda(
   if (should_use_scaled_cublaslt_grouped_gemm(
       mat_a,
       mat_b,
-      scale_a,
-      scale_b,
+      SwizzleType::NO_SWIZZLE,
+      SwizzleType::NO_SWIZZLE,
       out_dtype,
       scaling_a,
       scaling_b,
@@ -982,6 +986,8 @@ _scaled_grouped_mm_cuda(
         static_cast<int>(batchCount64),
         *scaling_a,
         *scaling_b,
+        SwizzleType::NO_SWIZZLE,
+        SwizzleType::NO_SWIZZLE,
         std::nullopt,
         std::nullopt,
         out);
@@ -1104,6 +1110,24 @@ TORCH_IMPL_FUNC(_scaled_grouped_mm_cuda_v2_out)(
   auto scale_recipe_b_enum = convert_int_to_enum<ScalingType>(scale_recipe_b);
   auto swizzle_b_enum = convert_int_to_enum<SwizzleType>(swizzle_b);
 
+  const auto swizzle_a_value = swizzle_a_enum.empty() ? SwizzleType::NO_SWIZZLE : swizzle_a_enum[0];
+  const auto swizzle_b_value = swizzle_b_enum.empty() ? SwizzleType::NO_SWIZZLE : swizzle_b_enum[0];
+
+  const bool uses_mnk4 = swizzle_a_value == SwizzleType::SWIZZLE_MNxK4 || swizzle_b_value == SwizzleType:SWIZZLE_MNxK4;
+  if (uses_mnk4) {
+    TORCH_CHECK_VALUE(
+        swizzle_a_enum.size() == 1 && swizzle_b_enum.size() == 1 &&
+            swizzle_a_enum[0] == SwizzleType::SWIZZLE_MNxK4 && swizzle_b_enum[0] == SwizzleType::SWIZZLE_MNxK4,
+        "For MNxK4 scaling swizzle_a and swizzle_b must each be SWIZZLE_MNxK4");
+    TORCH_CHECK_VALUE(
+        scale_recipe_a_enum.size() == 1 &&
+            (scale_recipe_a_enum[0] == ScalingType::BlockWise1x32 || scale_recipe_a_enum[0] == ScalingType::BlockWise1x128) &&
+            scaled_blas::check_mnk4_recipe(
+                scale_recipe_a_enum[0], mat_a.scalar_type(), scale_recipe_a_enum, scale_a_ref, swizzle_a_enum,
+                mat_b.scalar_type(), scale_recipe_b_enum, scale_b_ref, swizzle_b_enum),
+        "Invalid MNxK4 scaling configuration: expected matching BlockWise1x32 or BlockWise1x128 recipes, "
+        "float8_e8m0fnu scales, and float8 inputs with at least one float8_e4m3fn input");
+  }
 #if !defined(USE_ROCM) && defined(CUDA_VERSION) && CUDA_VERSION >= 13040
   const int64_t batchCount64 = (mat_a.dim() == 2 || mat_b.dim() == 2)
       ? offs_opt->size(0) : mat_a.size(0);
@@ -1115,38 +1139,31 @@ TORCH_IMPL_FUNC(_scaled_grouped_mm_cuda_v2_out)(
       mat_a.scalar_type(),
       scale_recipe_a_enum,
       scale_a_ref,
+      swizzle_a_enum,
       mat_b.scalar_type(),
       scale_recipe_b_enum,
-      scale_b_ref) &&
+      scale_b_ref,
+      swizzle_b_enum) &&
       scale_a[1].numel() == 1 && scale_b[1].numel() == 1;
-  if (single_scale_recipe &&
-      (scale_a[0].scalar_type() == at::kInt || scale_b[0].scalar_type() == at::kInt)) {
-    TORCH_CHECK_VALUE(
-        swizzle_a_enum.size() == 1 && swizzle_b_enum.size() == 1 &&
-            swizzle_a_enum[0] == SwizzleType::NO_SWIZZLE && swizzle_b_enum[0] == SwizzleType::NO_SWIZZLE,
-        "For packed MNxK4 scaling swizzle_a and swizzle_b must each be NO_SWIZZLE");
-  }
   if ((single_scale_recipe || nvfp4_two_level) &&
       should_use_scaled_cublaslt_grouped_gemm(
           mat_a,
           mat_b,
-          scale_a[0],
-          scale_b[0],
+          swizzle_a_value,
+          swizzle_b_value,
           out_dtype,
           scale_recipe_a_enum[0],
           scale_recipe_b_enum[0],
           batchCount64)) {
     if (scale_recipe_a_enum[0] == ScalingType::BlockWise1x16 ||
-        (scale_recipe_a_enum[0] == ScalingType::BlockWise1x32 &&
-         scale_a[0].scalar_type() == at::kFloat8_e8m0fnu)) {
+        (scale_recipe_a_enum[0] == ScalingType::BlockWise1x32 && !uses_mnk4)) {
       TORCH_CHECK_VALUE(swizzle_a_enum.size() == scale_recipe_a_enum.size(),
           "swizzle_a must match the number of scale recipes");
       TORCH_CHECK_VALUE(swizzle_a_enum[0] == SwizzleType::SWIZZLE_32_4_4,
           "scale_a must be swizzled to SWIZZLE_32_4_4 format");
     }
     if (scale_recipe_b_enum[0] == ScalingType::BlockWise1x16 ||
-        (scale_recipe_b_enum[0] == ScalingType::BlockWise1x32 &&
-         scale_b[0].scalar_type() == at::kFloat8_e8m0fnu)) {
+        (scale_recipe_b_enum[0] == ScalingType::BlockWise1x32 && !uses_mnk4)) {
       TORCH_CHECK_VALUE(swizzle_b_enum.size() == scale_recipe_b_enum.size(),
           "swizzle_b must match the number of scale recipes");
       TORCH_CHECK_VALUE(swizzle_b_enum[0] == SwizzleType::SWIZZLE_32_4_4,
@@ -1162,6 +1179,8 @@ TORCH_IMPL_FUNC(_scaled_grouped_mm_cuda_v2_out)(
         static_cast<int>(batchCount64),
         scale_recipe_a_enum[0],
         scale_recipe_b_enum[0],
+        swizzle_a_value,
+        swizzle_b_value,
         nvfp4_two_level ? std::optional<Tensor>{scale_a[1]} : std::nullopt,
         nvfp4_two_level ? std::optional<Tensor>{scale_b[1]} : std::nullopt,
         out_mut);
@@ -1169,6 +1188,8 @@ TORCH_IMPL_FUNC(_scaled_grouped_mm_cuda_v2_out)(
   }
 #endif
 
+  TORCH_CHECK_NOT_IMPLEMENTED(
+      !uses_mnk4, "MNxK4 grouped scaling requires the cuBLASLt backend on SM10.x/SM11.0 with CUDA >= 13.4");
   TORCH_CHECK_VALUE(
       out.scalar_type() == kBFloat16,
       "Only bf16 high precision output types are supported for non-cuBLASLt grouped gemm");
@@ -1189,9 +1210,11 @@ TORCH_IMPL_FUNC(_scaled_grouped_mm_cuda_v2_out)(
       mat_a.scalar_type(),
       scale_recipe_a_enum,
       scale_a_ref,
+      swizzle_a_enum,
       mat_b.scalar_type(),
       scale_recipe_b_enum,
-      scale_b_ref);
+      scale_b_ref,
+      swizzle_b_enum);
   TORCH_CHECK_VALUE(gemm_impl != ScaledGemmImplementation::NONE,
       "No gemm implementation was found");
 
