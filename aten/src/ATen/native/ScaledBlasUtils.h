@@ -203,7 +203,7 @@ bool check_mxfp4_recipe(
     ArrayRef<SwizzleType> swizzle_b);
 
 TORCH_API
-bool is_mnk4_input_pair(c10::ScalarType type_a, c10::ScalarType type_b);
+bool is_valid_cublaslt_input_pair(c10::ScalarType type_a, c10::ScalarType type_b);
 
 TORCH_API
 bool check_mnk4_recipe(

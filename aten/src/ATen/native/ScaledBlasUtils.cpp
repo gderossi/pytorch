@@ -263,7 +263,7 @@ bool check_mxfp4_recipe(
   return true;
 }
 
-bool is_mnk4_input_pair(c10::ScalarType type_a, c10::ScalarType type_b) {
+bool is_valid_cublaslt_input_pair(c10::ScalarType type_a, c10::ScalarType type_b) {
   return (type_a == ScalarType::Float8_e4m3fn || type_a == ScalarType::Float8_e5m2) &&
       (type_b == ScalarType::Float8_e4m3fn || type_b == ScalarType::Float8_e5m2) &&
       (type_a == ScalarType::Float8_e4m3fn || type_b == ScalarType::Float8_e4m3fn);
@@ -279,7 +279,7 @@ bool check_mnk4_recipe(
     std::vector<ScalingType>& recipe_b,
     ArrayRef<Tensor>& scales_b,
     ArrayRef<SwizzleType> swizzle_b) {
-  if (!is_mnk4_input_pair(type_a, type_b)) {
+  if (!is_valid_cublaslt_input_pair(type_a, type_b)) {
     return false;
   }
 
@@ -452,7 +452,7 @@ void validate_scaled_mm_v2_inputs(
         "scale_b must have 1 Float element");
   } else if (is_mnk4_1x32 || is_mnk4_1x128) {
     TORCH_CHECK_VALUE(
-        is_mnk4_input_pair(mat_a.scalar_type(), mat_b.scalar_type()),
+        is_valid_cublaslt_input_pair(mat_a.scalar_type(), mat_b.scalar_type()),
         "Invalid scaling configuration: packed MNxK4 inputs must be float8_e4m3fn or float8_e5m2, with at least one float8_e4m3fn input");
     TORCH_CHECK_VALUE(
         swizzle_a.size() == 1 && swizzle_b.size() == 1 &&

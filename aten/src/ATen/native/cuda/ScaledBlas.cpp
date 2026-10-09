@@ -997,7 +997,7 @@ Tensor& _scaled_mnk4(
 #ifndef USE_ROCM
   _check_mnk4_support();
   TORCH_CHECK_VALUE(
-      scaled_blas::is_mnk4_input_pair(mat_a.scalar_type(), mat_b.scalar_type()),
+      scaled_blas::is_valid_cublaslt_input_pair(mat_a.scalar_type(), mat_b.scalar_type()),
       "mat_a and mat_b must be float8_e4m3fn or float8_e5m2 tensors, with at least one float8_e4m3fn input, got: ",
       mat_a.scalar_type(),
       " and ",

@@ -9095,7 +9095,7 @@ def _grouped_mm_cublaslt_supported(
     return cuda_version >= (13, 3) and (9 <= device_capability[0] <= 11)
 
 
-# Mirror should_use_scaled_cublaslt_grouped_gemm in aten/src/ATen/native/cuda/GroupedBlas.cpp
+# Mirror legacy recipe inference and backend selection in GroupedBlas.cpp
 def _should_use_scaled_cublaslt_grouped_gemm(
     mat_a: Tensor,
     mat_b: Tensor,
