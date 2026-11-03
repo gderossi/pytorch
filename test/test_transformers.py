@@ -4938,6 +4938,99 @@ class TestSDPAAccelerator(NNTestCase):
             self.assertFalse(dk.isnan().any())
             self.assertFalse(dv.isnan().any())
 
+    @unittest.skipIf(not PLATFORM_SUPPORTS_CUDNN_ATTENTION, "cuDNN Attention is not supported on this system")
+    @onlyCUDA
+    @parametrize("batch_size,head_dims,grad_enabled,supported_before_fix", [
+        (32768, (64, 128), True, True),   # Output exactly at 4 GiB remains eligible.
+        (32769, (64, 128), True, False),  # Larger output requires forward fallback.
+        (32769, (64, 128), False, True),  # Inference is unaffected.
+        (32769, (128, 64), True, True),   # A large query alone must not cause fallback.
+    ])
+    def test_cudnn_attention_backward_output_size_202035(
+        self, device, batch_size, head_dims, grad_enabled, supported_before_fix,
+    ):
+        # Expanded inputs exercise the logical-size gate without allocating GiBs.
+        d_qk, d_v = head_dims
+        q = torch.zeros(1, 1, 512, d_qk, device=device, dtype=torch.bfloat16).expand(batch_size, -1, -1, -1)
+        k = torch.zeros_like(q[:1]).expand_as(q)
+        v = torch.zeros(1, 1, 512, d_v, device=device, dtype=torch.bfloat16).expand(batch_size, -1, -1, -1)
+        q.requires_grad_()
+        params = SDPAParams(q, k, v, None, 0.0, False, False)
+        supported = supported_before_fix or torch.backends.cudnn.version() >= 92801
+        with torch.set_grad_enabled(grad_enabled):
+            self.assertEqual(torch.backends.cuda.can_use_cudnn_attention(params), supported)
+            with sdpa_kernel([SDPBackend.CUDNN_ATTENTION, SDPBackend.MATH], set_priority=True):
+                expected = SDPBackend.CUDNN_ATTENTION if supported else SDPBackend.MATH
+                self.assertEqual(torch._fused_sdp_choice(q, k, v), expected.value)
+            if not supported:
+                with sdpa_kernel(SDPBackend.CUDNN_ATTENTION):
+                    with self.assertWarnsRegex(UserWarning, "when the packed output exceeds 4 GiB"):
+                        with self.assertRaisesRegex(RuntimeError, "No available kernel"):
+                            F.scaled_dot_product_attention(q, k, v)
+
+    @unittest.skipIf(not PLATFORM_SUPPORTS_CUDNN_ATTENTION, "cuDNN Attention is not supported on this system")
+    @onlyCUDA
+    @largeTensorTest("6GB", "cuda")
+    @parametrize("dtype", [torch.float16, torch.bfloat16])
+    def test_cudnn_attention_large_grad_output_span_202035(self, device, dtype):
+        generator = torch.Generator().manual_seed(1487)
+        values = [torch.randn(2, 1, 256, 128, generator=generator).to(dtype) for _ in range(4)]
+        q, k, v = (value.double().requires_grad_() for value in values[:3])
+        probabilities = torch.softmax((q @ k.transpose(-2, -1)) / math.sqrt(128), dim=-1)
+        reference = probabilities @ v
+        reference_grads = torch.autograd.grad(reference, (q, k, v), values[3].double())
+
+        stride = 2**31 - 16384
+        backing = torch.zeros(stride + 32768, dtype=dtype, device=device)
+        upstream = backing.as_strided((2, 1, 256, 128), (stride, 32768, 128, 1))
+        upstream.copy_(values[3])
+        results = []
+        for grad_output in (values[3].to(device), upstream, values[3].to(device)):
+            q, k, v = (value.to(device).requires_grad_() for value in values[:3])
+            with sdpa_kernel(SDPBackend.CUDNN_ATTENTION):
+                self.assertEqual(torch._fused_sdp_choice(q, k, v), SDPBackend.CUDNN_ATTENTION.value)
+                output = F.scaled_dot_product_attention(q, k, v)
+                grads = torch.autograd.grad(output, (q, k, v), grad_output)
+            for actual, expected in zip((output, *grads), (reference, *reference_grads)):
+                actual = actual.detach().cpu().double()
+                self.assertTrue(actual.isfinite().all())
+                for batch_actual, batch_expected in zip(actual, expected):
+                    self.assertLess((batch_actual - batch_expected).norm() / batch_expected.norm(), 0.01)
+            results.append(tuple(grad.cpu() for grad in grads))
+        for packed, gapped, packed_again in zip(*results):
+            self.assertEqual(packed, gapped, atol=0, rtol=0)
+            self.assertEqual(packed, packed_again, atol=0, rtol=0)
+
+    @unittest.skipIf(not PLATFORM_SUPPORTS_CUDNN_ATTENTION, "cuDNN Attention is not supported on this system")
+    @onlyCUDA
+    @largeTensorTest("6GB", "cuda")
+    def test_cudnn_attention_saved_output_span_202035(self, device):
+        # A head gap covers saved-output packing independently of the public
+        # autograd reproducer, which changes only grad_output's batch stride.
+        dtype = torch.bfloat16
+        shape = (1, 2, 256, 128)
+        generator = torch.Generator().manual_seed(1487)
+        q, k, v, upstream = [torch.randn(shape, generator=generator).to(device=device, dtype=dtype) for _ in range(4)]
+        result = torch.ops.aten._scaled_dot_product_cudnn_attention(q, k, v, None, True)
+        output, lse, cum_q, cum_k, max_q, max_k, seed, offset, _ = result
+
+        def backward(out):
+            return torch.ops.aten._scaled_dot_product_cudnn_attention_backward(
+                upstream, q, k, v, out, lse, seed, offset, None, cum_q, cum_k, max_q, max_k, 0.0, False,
+            )
+
+        gap = 2**31 - 16384
+        backing = torch.zeros(gap + 32768 + 128, device=device, dtype=dtype)
+        gapped_output = backing.as_strided(shape, (65536, gap, 128, 1), storage_offset=128)
+        gapped_output.copy_(output)
+        expected = backward(output)
+        actual = backward(gapped_output)
+        packed_again = backward(output)
+        for ref, got, again in zip(expected, actual, packed_again):
+            self.assertTrue(got.isfinite().all())
+            self.assertEqual(ref, got, atol=0, rtol=0)
+            self.assertEqual(ref, again, atol=0, rtol=0)
+
     @unittest.skipIf(not PLATFORM_SUPPORTS_CUDNN_ATTENTION, "cudnn Attention is not supported on this system")
     @onlyCUDA
     @unittest.skipIf(not isSM90Device, "requires SM90")

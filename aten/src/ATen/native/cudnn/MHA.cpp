@@ -1,6 +1,7 @@
 #include <limits>
 
 #include <ATen/ATen.h>
+#include <ATen/EmptyTensor.h>
 #include <ATen/cuda/CUDAConfig.h>
 
 #if AT_CUDNN_ENABLED()
@@ -229,6 +230,33 @@ void check_cudnn_sdpa_decode(int64_t s_q) {
   TORCH_CHECK(
       s_q != 1 || !sdp::is_cudnn_attention_decode_disabled(),
       "cuDNN SDPA decode is disabled for cuDNN versions 9.19-9.25.0 (except 9.24.1) on SM 10.x and 11.x.");
+}
+
+// TODO(#202035): Remove once the cuDNN pins in
+// .github/scripts/generate_binary_build_matrix.py and .ci/docker/common/
+// install_cuda.sh, and the supported runtime minimum, reach 9.28.1.
+static Tensor pack_cudnn_sdpa_bprop_operand(
+    const Tensor& tensor,
+    const char* name) {
+  if (at::detail::getCUDAHooks().versionRuntimeCuDNN() >= 92801) {
+    return tensor;
+  }
+  constexpr uint64_t max_span_bytes = uint64_t{1} << 32;
+  // Offsets are relative to data_ptr(), so exclude the storage offset. This
+  // helper checks arithmetic overflow and ignores unused singleton strides.
+  const auto span_bytes = at::detail::computeStorageNbytes(
+      tensor.sizes(), tensor.strides(), tensor.element_size());
+  if (span_bytes <= max_span_bytes) {
+    return tensor;
+  }
+  TORCH_CHECK(
+      static_cast<uint64_t>(tensor.numel()) <=
+          max_span_bytes / tensor.element_size(),
+      "cuDNN SDPA before version 9.28.1 cannot safely address ",
+      name,
+      " spanning more than 4 GiB even when packed. Upgrade cuDNN or select "
+      "another SDPA backend for the forward call.");
+  return tensor.contiguous();
 }
 
 // Whether we will use ragged offsets in the dense (non-nested) path
@@ -1967,7 +1995,7 @@ void run_cudnn_SDP_bprop(
     const Tensor& k,
     const Tensor& v,
     const std::optional<Tensor>& attn_bias,
-    const Tensor& o,
+    const Tensor& out,
     const Tensor& dO,
     const Tensor& softmaxstats,
     Tensor& dQ,
@@ -1976,10 +2004,11 @@ void run_cudnn_SDP_bprop(
     const Tensor& dropoutseed,
     const Tensor& dropoutoffset) {
   // do nothing if we got 0-element tensors
-  if (!q.numel() || !k.numel() || !v.numel() || !o.numel() || !dO.numel() ||
+  if (!q.numel() || !k.numel() || !v.numel() || !out.numel() || !dO.numel() ||
       !softmaxstats.numel()) {
     return;
   }
+  const auto o = pack_cudnn_sdpa_bprop_operand(out, "output");
   check_cudnn_sdpa_decode(s_q);
   checkSDPAAlignment(q, "query");
   checkSDPAAlignment(k, "key");
@@ -2020,6 +2049,7 @@ void run_cudnn_SDP_bprop(
     permute_to_matching_layout(o, dO_);
   }
 #endif
+  dO_ = pack_cudnn_sdpa_bprop_operand(dO_, "grad_output");
   // Autograd may pass a misaligned grad_output view (e.g. from cat backward).
   if (!has_aligned_layout(dO_, /*allow_broadcast=*/true)) {
     dO_ = at::empty_like(o);
@@ -2146,7 +2176,7 @@ void run_cudnn_SDP_bprop_nestedtensor(
     const Tensor& k,
     const Tensor& v,
     const std::optional<Tensor>& attn_bias,
-    const Tensor& o,
+    const Tensor& out,
     const Tensor& dO,
     const Tensor& softmaxstats,
     Tensor& dQ,
@@ -2154,13 +2184,14 @@ void run_cudnn_SDP_bprop_nestedtensor(
     Tensor& dV,
     const Tensor& dropoutseed,
     const Tensor& dropoutoffset) {
-  if (!q.numel() || !k.numel() || !v.numel() || !o.numel() || !dO.numel() ||
+  if (!q.numel() || !k.numel() || !v.numel() || !out.numel() || !dO.numel() ||
       !softmaxstats.numel()) {
     dQ.zero_();
     dK.zero_();
     dV.zero_();
     return;
   }
+  const auto o = pack_cudnn_sdpa_bprop_operand(out, "output");
   check_cudnn_sdpa_decode(s_q);
   TORCH_CHECK(
       softmaxstats.dim() == 2, "cuDNN SDPA expected a 2D (H, T) softmax_lse");
@@ -2168,9 +2199,9 @@ void run_cudnn_SDP_bprop_nestedtensor(
 
   // Alignment is not part of the cache key, and cuDNN requires 16-byte
   // pointer/stride alignment. Preserve dO strides when those hold.
-  Tensor dO_ = dO;
-  if (!has_aligned_varlen_layout(dO)) {
-    dO_ = dO.clone(at::MemoryFormat::Contiguous);
+  Tensor dO_ = pack_cudnn_sdpa_bprop_operand(dO, "grad_output");
+  if (!has_aligned_varlen_layout(dO_)) {
+    dO_ = dO_.clone(at::MemoryFormat::Contiguous);
   }
   TORCH_INTERNAL_ASSERT(
       has_aligned_varlen_layout(dO_),

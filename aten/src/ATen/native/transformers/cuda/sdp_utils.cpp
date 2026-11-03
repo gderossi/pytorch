@@ -700,6 +700,39 @@ bool check_cudnn_dropout(sdp_params const& params, bool debug) {
   return true;
 }
 
+bool check_cudnn_backward_output_size(sdp_params const& params, bool debug) {
+  // TODO(#202035): Remove once the cuDNN pins in
+  // .github/scripts/generate_binary_build_matrix.py and .ci/docker/common/
+  // install_cuda.sh, and the supported runtime minimum, reach 9.28.1.
+  if (!input_requires_grad(params) ||
+      at::detail::getCUDAHooks().versionRuntimeCuDNN() >= 92801) {
+    return true;
+  }
+  const auto d_v = params.value.sym_size(-1);
+  if (!TORCH_GUARD_OR_FALSE(d_v.sym_gt(0)) ||
+      !TORCH_GUARD_OR_FALSE(params.query.sym_size(-1).sym_gt(0))) {
+    return false;
+  }
+  // Oversized strided backward operands are packed in MHA.cpp. Only reject
+  // forward calls whose output cannot fit the 32-bit byte range even packed.
+  // Use the query's rows and the value's width, including for GQA.
+  const c10::SymInt output_rows = has_for_nested_inputs(params)
+      ? c10::SymInt(params.query.numel() / params.query.size(-1))
+      : params.query.sym_size(0) * params.query.sym_size(1) *
+          params.query.sym_size(2);
+  constexpr int64_t max_span_bytes = int64_t{1} << 32;
+  const auto max_elements = max_span_bytes / params.query.element_size();
+  if (!TORCH_GUARD_OR_FALSE(output_rows.sym_le(max_elements / d_v))) {
+    if (debug) {
+      TORCH_WARN(
+          "cuDNN SDPA before version 9.28.1 does not support backward "
+          "when the packed output exceeds 4 GiB.");
+    }
+    return false;
+  }
+  return true;
+}
+
 #ifndef USE_ROCM
 bool check_flash_attention_grid_size(sdp_params const& params, bool debug) {
   // Flash forward and backward auxiliary kernels put batch/heads in grid.y/z.
@@ -1156,7 +1189,8 @@ bool can_use_cudnn_attention(const sdp_params& params, bool debug) {
       check_last_dim_stride_equals_1_dense<true /*ignore_singleton_dim=*/>,
       check_batch_size_and_num_heads_dense<true /*supports_gqa*/, false /*requires_same_num_heads*/, true /*supports_mqa*/>,
       check_cudnn_tensor_shapes,
-      check_cudnn_d256_bprop_head_dim
+      check_cudnn_d256_bprop_head_dim,
+      check_cudnn_backward_output_size
   });
 
   if (has_only_dense_inputs(params)) {
@@ -1169,6 +1203,7 @@ bool can_use_cudnn_attention(const sdp_params& params, bool debug) {
   constexpr auto nested_constraints =
       std::to_array<bool (*)(sdp_params const&, bool)>({
           check_cudnn_query_seq_len_nested,
+          check_cudnn_backward_output_size,
       });
 
   if (has_for_nested_inputs(params)) {
