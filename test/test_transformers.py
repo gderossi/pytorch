@@ -4970,6 +4970,42 @@ class TestSDPAAccelerator(NNTestCase):
 
     @unittest.skipIf(not PLATFORM_SUPPORTS_CUDNN_ATTENTION, "cuDNN Attention is not supported on this system")
     @onlyCUDA
+    def test_cudnn_attention_jagged_output_size_202035(self, device):
+        from torch.nested._internal.sdpa import _select_sdp_backend
+
+        offsets = torch.tensor([0, 512], device=device)
+        values = torch.zeros(1, 512, 128, device=device, dtype=torch.bfloat16)
+        for heads in (32768, 32769):
+            # H-major jagged inputs: at and just above a 4 GiB output, with
+            # expanded values so backend selection needs only a small allocation.
+            q = torch.nested.nested_tensor_from_jagged(
+                values.expand(heads, -1, -1), offsets, jagged_dim=2,
+                min_seqlen=512, max_seqlen=512,
+            ).requires_grad_()
+            params = SDPAParams(q, q, q, None, 0.0, False, False)
+            supported = heads == 32768 or torch.backends.cudnn.version() >= 92801
+            self.assertEqual(torch.backends.cuda.can_use_cudnn_attention(params), supported)
+            with sdpa_kernel(SDPBackend.CUDNN_ATTENTION):
+                if supported:
+                    self.assertEqual(
+                        _select_sdp_backend(q, q, q, None, 0.0, False, False), SDPBackend.CUDNN_ATTENTION,
+                    )
+                else:
+                    with self.assertWarnsRegex(UserWarning, "when the packed output exceeds 4 GiB"):
+                        with self.assertRaisesRegex(RuntimeError, "No viable backend"):
+                            F.scaled_dot_product_attention(q, q, q)
+            if not supported and PLATFORM_SUPPORTS_FLASH_ATTENTION:
+                with sdpa_kernel([SDPBackend.CUDNN_ATTENTION, SDPBackend.FLASH_ATTENTION]):
+                    self.assertEqual(
+                        _select_sdp_backend(q, q, q, None, 0.0, False, False), SDPBackend.FLASH_ATTENTION,
+                    )
+            with torch.no_grad(), sdpa_kernel(SDPBackend.CUDNN_ATTENTION):
+                self.assertEqual(
+                    _select_sdp_backend(q, q, q, None, 0.0, False, False), SDPBackend.CUDNN_ATTENTION,
+                )
+
+    @unittest.skipIf(not PLATFORM_SUPPORTS_CUDNN_ATTENTION, "cuDNN Attention is not supported on this system")
+    @onlyCUDA
     @largeTensorTest("6GB", "cuda")
     @parametrize("dtype", [torch.float16, torch.bfloat16])
     def test_cudnn_attention_large_grad_output_span_202035(self, device, dtype):

@@ -716,8 +716,8 @@ bool check_cudnn_backward_output_size(sdp_params const& params, bool debug) {
   // Oversized strided backward operands are packed in MHA.cpp. Only reject
   // forward calls whose output cannot fit the 32-bit byte range even packed.
   // Use the query's rows and the value's width, including for GQA.
-  const c10::SymInt output_rows = has_for_nested_inputs(params)
-      ? c10::SymInt(params.query.numel() / params.query.size(-1))
+  const c10::SymInt output_rows = params.query.is_nested()
+      ? params.query.sym_numel() / params.query.sym_size(-1)
       : params.query.sym_size(0) * params.query.sym_size(1) *
           params.query.sym_size(2);
   constexpr int64_t max_span_bytes = int64_t{1} << 32;
@@ -1176,7 +1176,8 @@ bool can_use_cudnn_attention(const sdp_params& params, bool debug) {
           check_dtypes_low_precision,
           check_attn_mask_shape,
           check_cudnn_hardware_support,
-          check_cudnn_dropout
+          check_cudnn_dropout,
+          check_cudnn_backward_output_size
           });
   for (auto& constraint : general_constraints) {
     if (!constraint(params, debug)) {
@@ -1189,8 +1190,7 @@ bool can_use_cudnn_attention(const sdp_params& params, bool debug) {
       check_last_dim_stride_equals_1_dense<true /*ignore_singleton_dim=*/>,
       check_batch_size_and_num_heads_dense<true /*supports_gqa*/, false /*requires_same_num_heads*/, true /*supports_mqa*/>,
       check_cudnn_tensor_shapes,
-      check_cudnn_d256_bprop_head_dim,
-      check_cudnn_backward_output_size
+      check_cudnn_d256_bprop_head_dim
   });
 
   if (has_only_dense_inputs(params)) {
@@ -1203,7 +1203,6 @@ bool can_use_cudnn_attention(const sdp_params& params, bool debug) {
   constexpr auto nested_constraints =
       std::to_array<bool (*)(sdp_params const&, bool)>({
           check_cudnn_query_seq_len_nested,
-          check_cudnn_backward_output_size,
       });
 
   if (has_for_nested_inputs(params)) {
